@@ -57,74 +57,114 @@ dir_data_common <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common"
 epsg <- 2927 #WA state standard; NAD83(HARN)/ft
 
 load("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/imw_hab_250205.RData")
+rm(hab, transects_excluded)
+sf_hr_flw <- readRDS("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/sf_hr_flw_imw.rds") |> 
+  select(cmplx_desc, Name, HUC12, NHDPlusID, length_km, dasqkm_tot, elev_min, slope)
 
 ```
 
-
-
-this chunk writes to file
 ```{r rebuild_nhdplus_highres, eval=FALSE}
 #well then!!! nhdplusTools::get_3dhp 
 #https://doi-usgs.github.io/nhdplusTools/articles/get_3dhp_data.html
 #also: https://doi-usgs.github.io/nhdplusTools/articles/nhdplushr.html
 #but using known H12s from already DL'd HUC4 GDBs
 
-#rebuild flowline objects for LC
-hr_gdb <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common/nhdphr/17/NHDPLUS_H_1708_HU4_GDB.gdb"
-st_layers(hr_gdb)
-hr_h12 <- st_read(hr_gdb, layer = "WBDHU12") |> st_transform(st_crs(epsg))
-hr_h12 <- hr_h12 |> #as_tibble() |> 
-  select(HUC12, Name, HUType, AreaSqKm, ToHUC) |> 
-  filter(str_detect(Name, "Mill Creek$|Germany|Abernathy")) #|> arrange(Name) |> print(n = Inf) 
+library(mapview)
 
-hr_flw <- st_read(hr_gdb, layer = "NHDFlowline") |> 
-  select(NHDPlusID, GNIS_Name, ReachCode, FCode, length_km = LengthKM) |> 
-  st_zm() |> 
-  st_transform(st_crs(epsg)) |> 
-  st_cast("LINESTRING") 
+hr_gdb <- c("NHDPLUS_H_1708_HU4_GDB.gdb", "NHDPLUS_H_1711_HU4_GDB.gdb")
 
-hr_flw_lc <- map(
-  hr_h12$HUC12,
-  ~hr_flw[filter(hr_h12, HUC12==.x),] |> mutate(HUC12 = .x)
-  ) |> 
-  bind_rows() |> 
-  left_join(
-    as_tibble(hr_h12) |> select(HUC12, Name),
-    by = "HUC12") |> 
-  left_join(
-    st_read(hr_gdb, layer = "NHDPlusFlowlineVAA") |> #names()
-    select(
-      NHDPlusID, 
-      #FromNode, ToNode,
-      order = StreamOrde,
-      dasqkm_cat = AreaSqKm, #locl catchment
-      dasqkm_tot = TotDASqKm, #cumulative 
-      slope = Slope, #unitless
-      slopelgth = SlopeLenKm, #the length used to calc slope
-      elev_min = MinElevSmo, elev_max = MaxElevSmo #in cm
+hr_h12 <- map(hr_gdb,
+              ~st_read(file.path(dir_data_common, "nhdphr/17/",.x), layer = "WBDHU12") |> 
+                select(HUC12, Name, HUType, AreaSqKm, ToHUC)
+) |> 
+  bind_rows() |> #for manual name filtering: as_tibble() |> select(-Shape) |> arrange(Name) |> view()
+  filter(
+    HUC12 %in% c(
+      "171100210304", #Deep
+      "171100210303", #W Twin
+      "171100210302", #E Twin
+      "171100180107", #BBC incl other HC
+      "170800030605", #Mill
+      "170800030604", #Abernathy
+      "170800030603" #Germany
     )
-    ,
+  ) |> #mapview()
+  st_transform(st_crs(epsg)) |> 
+  select(-AreaSqKm, - ToHUC) |> 
+  mutate(
+    cmplx_desc = case_when(
+      str_detect(Name, "Deep|Twin") ~ "Straits of Juan de Fuca",
+      str_detect(Name, "Beef") ~ "Hood Canal",
+      str_detect(Name, "Mill|Aber|Ger") ~ "Lower Columbia"
+    )
+  )
+
+
+# #no HUC12 identifier on flowlines so need to subset spatially
+# st_read(
+#   "~/T/DFW-Team WDFW Watershed Synthesis - data_common/nhdphr/17/NHDPLUS_H_1708_HU4_GDB.gdb", 
+#   query="select * from \"NHDFlowline\" limit 1") |> 
+#   colnames()
+
+#memory hungry, builds single object of ALL 500K lines in 1708 and 1711
+hr_flw <- map(hr_gdb,
+    ~st_read(file.path(dir_data_common, "nhdphr/17/",.x), layer = "NHDFlowline") |> 
+      select(NHDPlusID, GNIS_Name, length_km = LengthKM) |> 
+      st_zm() |> 
+      st_transform(st_crs(epsg)) |> 
+      st_cast("LINESTRING") 
+  ) |> 
+  bind_rows()
+
+#spatially subset lines by HUC12 polys adding HUC12 ids, 
+#expands for 5 small lines that cross between Mill & Abernathy so deduplicate
+#then add select VAA physiographic & EROM flow fields
+hr_flw_imw <- st_join(
+  hr_flw[hr_h12,],
+  hr_h12
+  ) |> 
+  distinct(NHDPlusID, .keep_all = T) |> 
+  left_join(
+    map(hr_gdb,
+        ~st_read(file.path(dir_data_common, "nhdphr/17/",.x), layer = "NHDPlusFlowlineVAA") |> #names()
+          select(
+            NHDPlusID, #FromNode, ToNode,
+            order = StreamOrde,
+            dasqkm_cat = AreaSqKm, #locl catchment
+            dasqkm_tot = TotDASqKm, #cumulative 
+            slope = Slope, #unitless
+            slopelgth = SlopeLenKm, #the length used to calc slope
+            elev_min = MinElevSmo, elev_max = MaxElevSmo #in cm
+          )
+    ) |> bind_rows(),
     by = "NHDPlusID"
   ) |> 
   left_join(
-    st_read(hr_gdb, layer = "NHDPlusEROMMA") |> 
-      select(NHDPlusID, QEMA, VEMA),
+    map(hr_gdb,
+        ~st_read(file.path(dir_data_common, "nhdphr/17/",.x), layer = "NHDPlusEROMMA") |> #names()
+          select(NHDPlusID, QEMA, VEMA)
+    ) |> bind_rows(),
     by = "NHDPlusID"
   ) |> 
   mutate(
-    cmplx_desc = "Lower Columbia",
-    #h12 names are identical strings but not factors as 'strm' in existing IMW objs
-    strm = factor(Name, levels = c("Mill Creek", "Abernathy Creek", "Germany Creek")), 
     across(starts_with("elev"), ~./100)
+    NHDPlusID = as.character(NHDPlusID)
   )
 
-ggplot() +  
-  geom_sf(data = hr_h12, fill = NA) +
-  geom_sf(data = hr_flw_lc, aes(linewidth = dasqkm_tot, color = QEMA)) +
-  geom_sf(data = sf_nhdphr |> filter(cmplx_desc == "Lower Columbia"), color = "blue") +
-  facet_wrap(~strm, ncol = 1)
+as_tibble(hr_flw_imw) |> count(cmplx_desc, Name)
 
-saveRDS(hr_flw_lc, file = "~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/sf_hr_flw_lc.rds")
+# #no huc14 in HR gdb or via nhdplusTools::get_huc
+# #could probably get something via https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/7
+# #but going to deal with HC manually during SSNbler anyway
+# #so leaving streams unseparated for now
+# hr_flw_imw |> filter(cmplx_desc == "Hood Canal") |> mapview(zcol = "GNIS_Name")
+# # outlets:
+# site_meta |> filter(cmplx_abrv=="HC") |> distinct(strm) |> 
+#   mutate(NHDPlusID = c("55000800121057","55000800196755","55000800196966","55000800045870"))
+
+
+saveRDS(hr_flw_imw, file = "~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/sf_hr_flw_imw.rds")
+
 ```
 
 ## SSNbler LC
@@ -132,23 +172,6 @@ saveRDS(hr_flw_lc, file = "~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/
 Sites with at least 10 years of observations were associated to the NHDplus High Resolution flowlines using the `SSNbler` package (Peterson et al. 2024). 
 
 Topological issues in the hydrography (split paths, 3-way convergences, etc.) were manually examined and corrected, and appropriate matching of site points to stream lines was visually confirmed.
-
-```{r ssnbler_starting_flowlines_and_sites}
-sf_hr_flw_lc <- readRDS("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/sf_hr_flw_lc.rds") |> 
-  select(strm, HUC12, NHDPlusID, length_km, dasqkm_cat, dasqkm_tot, elev_min, elev_max, slope, QEMA, VEMA) |> 
-  mutate(across(NHDPlusID, as.character))
-
-sf_sites_lc <- site_meta_sf |> 
-  filter(cmplx_abrv == "LC") |> 
-  st_transform(st_crs(sf_hr_flw_lc)) |> 
-  semi_join(
-    as_tibble(site_meta_sf) |> 
-      filter(year_n >= 10) |> 
-      select(site, year_n)
-    ,
-    by = "site")
-
-```
 
 ```{r ssnbler_mill, eval=FALSE}
 strm_to_ssn2 <- "Mill"
