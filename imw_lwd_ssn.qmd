@@ -1,0 +1,1965 @@
+---
+title: "Stream network variation in large wood dynamics"
+author: "dan.auerbach@dfw.wa.gov"
+date: "`r Sys.Date()`"
+format:
+  html:
+    embed-resources: true
+    theme: yeti 
+    code-fold: true
+    toc: true
+    toc-location: left
+    grid:
+      sidebar-width: 180px
+      body-width: 1100px
+      margin-width: 20px
+---
+
+
+emailed:
+  1. [How] Does network/riverscape position affect temporal variation in wood density? (this follows from past reflections from Kirk and Will) and
+  2. [How] Are changes in wood density followed by changes in other measures of habitat form? (this follows from past comments from Joe) and
+  3. Do changes in coho juvenile abundance or productivity correspond with changes in habitat form heterogeneity/diversity
+ 
+I suggest the first is testable by regressing interannual variation relative to topographic/spatial attributes and the second by time series cross-correlations (i.e., does wood ‘lead’ pools). I am very comfortable rejecting them, but my initial hypotheses are that
+  - yes, steeper and wider reaches will show greater year to year change as wood is transported and/or deposited and
+  - yes, increases in density will be followed by increases in the prevalence of pool forms and increased bankfull width
+  - yes, increases in productivity will be associated with greater complexity/heterogeneity [I’m aware this is weakly specified, but I mean increased ‘types’ at size and/or stream scales]
+ 
+The figures below illustrate progress towards #1. The first multipanel scatter shows temporal variation in large wood density as the per-site CV over years relative to drainage area, slope, and bankfull width in the columns left to right. The DA and slope are derived from NHDplusHighRes, the bankfull width is minimum across years of the per-year median across transects. The rows distinguish streams by complex, with Little Anderson and Seabeck further split out due to their differences in overall size, higher sampling density, and channel units (many more ‘dry’ reaches). The CV y-axis is fixed across all panels, the x-axes are fixed per column, helping to show stream/basin-scale differences in the site samples (e.g., Little Anderson and Seabeck have much narrower widths; Germany has a much higher proportion of steeper sloped reaches; etc. and also evident in the second map figure). Subsets of sites in particular streams show evidence of univariate relationships, and I think we can recognize/describe several meaningful patterns that accord with fluvial geomorphic principles (e.g., variation in several streams is higher in some steep and headwater reaches then decreases moving downstream before increasing again in wider reaches near outlets), but I would say that these data do not support a generally consistent or generically portable relationship of wood variation to site width, slope, or drainage area. Examining the maps for how slopes are distributed and where the highest CVs occurred was especially helpful for me, for example, clarifying how Germany has considerably steeper headwaters than Mill (with Abernathy splitting the difference) and a fairly topologically distinct sampling footprint (i.e., more upper basin, fewer mainstem, relative to the other LC). Having reached this version, it should also be relatively straightforward to further stratify by mainstem-trib or subset to ‘primary rearing’ sites, as we’ve discussed in the past. Pending feedback, my next steps on this will be to fit some models to substantiate the ‘not much relationship’ claim on #1 and to better examine #2. Pending that, I’ll turn back to #3.
+
+weekend ultra plain language thoughts for intro:
+  - wood in streams is important
+  - wood in streams is dynamic, it's understood to change in time (on a 'medium phase/frequency' relative to faster changing flow and slower changing geomorphic character, even to bedrock/base level)
+  - but despite this importance and recognition of change in time, and despite the very significant ongoing investments to 're-wood' PNW riverscapes, few studies have had the spatiotemporal scope of data collection to track large wood dynamics over more than a decade at numerous sites throughout the drainage network of 7 replicate streams.
+
+flows?
+  - link Brinkerhoff results? (easy now with COMIDs in place)
+  - no NWM3.0 to +HR, anything else? daily high res precip from Maurer/CIG...
+
+Test habitat portfolio theory: how does var_stream relate to var_sites? per stream, what proportion of sites have
+  - strong positive autocorrelation, indicating slower/smoother fluctuations in values ['low frequency' conditions]?
+  - strong negative autocorrelation, indicating more rapidly reversing values ['high frequency' conditions]
+
+do more with among-site phase/synchrony via cross-corr? all pairwise cross-corr ...refactor around corrr
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 9, fig.height = 10)
+
+library("tidyverse", quietly = T)
+library("sf")
+library("patchwork")
+library("gt")
+theme_set(theme_minimal()) 
+
+dir_data_common <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common"
+epsg <- 2927 #WA state standard; NAD83(HARN)/ft
+
+load("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/imw_hab_250205.RData")
+
+```
+
+
+
+this chunk writes to file
+```{r rebuild_nhdplus_highres, eval=FALSE}
+#well then!!! nhdplusTools::get_3dhp 
+#https://doi-usgs.github.io/nhdplusTools/articles/get_3dhp_data.html
+#also: https://doi-usgs.github.io/nhdplusTools/articles/nhdplushr.html
+#but using known H12s from already DL'd HUC4 GDBs
+
+#rebuild flowline objects for LC
+hr_gdb <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common/nhdphr/17/NHDPLUS_H_1708_HU4_GDB.gdb"
+st_layers(hr_gdb)
+hr_h12 <- st_read(hr_gdb, layer = "WBDHU12") |> st_transform(st_crs(epsg))
+hr_h12 <- hr_h12 |> #as_tibble() |> 
+  select(HUC12, Name, HUType, AreaSqKm, ToHUC) |> 
+  filter(str_detect(Name, "Mill Creek$|Germany|Abernathy")) #|> arrange(Name) |> print(n = Inf) 
+
+hr_flw <- st_read(hr_gdb, layer = "NHDFlowline") |> 
+  select(NHDPlusID, GNIS_Name, ReachCode, FCode, length_km = LengthKM) |> 
+  st_zm() |> 
+  st_transform(st_crs(epsg)) |> 
+  st_cast("LINESTRING") 
+
+hr_flw_lc <- map(
+  hr_h12$HUC12,
+  ~hr_flw[filter(hr_h12, HUC12==.x),] |> mutate(HUC12 = .x)
+  ) |> 
+  bind_rows() |> 
+  left_join(
+    as_tibble(hr_h12) |> select(HUC12, Name),
+    by = "HUC12") |> 
+  left_join(
+    st_read(hr_gdb, layer = "NHDPlusFlowlineVAA") |> #names()
+    select(
+      NHDPlusID, 
+      #FromNode, ToNode,
+      order = StreamOrde,
+      dasqkm_cat = AreaSqKm, #locl catchment
+      dasqkm_tot = TotDASqKm, #cumulative 
+      slope = Slope, #unitless
+      slopelgth = SlopeLenKm, #the length used to calc slope
+      elev_min = MinElevSmo, elev_max = MaxElevSmo #in cm
+    )
+    ,
+    by = "NHDPlusID"
+  ) |> 
+  left_join(
+    st_read(hr_gdb, layer = "NHDPlusEROMMA") |> 
+      select(NHDPlusID, QEMA, VEMA),
+    by = "NHDPlusID"
+  ) |> 
+  mutate(
+    cmplx_desc = "Lower Columbia",
+    #h12 names are identical strings but not factors as 'strm' in existing IMW objs
+    strm = factor(Name, levels = c("Mill Creek", "Abernathy Creek", "Germany Creek")), 
+    across(starts_with("elev"), ~./100)
+  )
+
+ggplot() +  
+  geom_sf(data = hr_h12, fill = NA) +
+  geom_sf(data = hr_flw_lc, aes(linewidth = dasqkm_tot, color = QEMA)) +
+  geom_sf(data = sf_nhdphr |> filter(cmplx_desc == "Lower Columbia"), color = "blue") +
+  facet_wrap(~strm, ncol = 1)
+
+saveRDS(hr_flw_lc, file = "~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/sf_hr_flw_lc.rds")
+```
+
+## SSNbler LC
+
+Sites with at least 10 years of observations were associated to the NHDplus High Resolution flowlines using the `SSNbler` package (Peterson et al. 2024). 
+
+Topological issues in the hydrography (split paths, 3-way convergences, etc.) were manually examined and corrected, and appropriate matching of site points to stream lines was visually confirmed.
+
+```{r ssnbler_starting_flowlines_and_sites}
+sf_hr_flw_lc <- readRDS("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/sf_hr_flw_lc.rds") |> 
+  select(strm, HUC12, NHDPlusID, length_km, dasqkm_cat, dasqkm_tot, elev_min, elev_max, slope, QEMA, VEMA) |> 
+  mutate(across(NHDPlusID, as.character))
+
+sf_sites_lc <- site_meta_sf |> 
+  filter(cmplx_abrv == "LC") |> 
+  st_transform(st_crs(sf_hr_flw_lc)) |> 
+  semi_join(
+    as_tibble(site_meta_sf) |> 
+      filter(year_n >= 10) |> 
+      select(site, year_n)
+    ,
+    by = "site")
+
+```
+
+```{r ssnbler_mill, eval=FALSE}
+strm_to_ssn2 <- "Mill"
+dir_ssn <- file.path("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/ssn_data", strm_to_ssn2)
+#first pass reveals issues
+edges <- SSNbler::lines_to_lsn(
+  streams = sf_hr_flw_lc |> filter(str_detect(strm, strm_to_ssn2)),
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+
+mapview::mapview(list(
+  flw = sf::st_read(file.path(dir_ssn, "edges.gpkg")),
+  nod = sf::st_read(file.path(dir_ssn, "nodes.gpkg")),
+  err = sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) #|> as_tibble() |> count(nodecat, error)
+  ), zcol = c("dasqkm_tot","nodecat","error"))
+
+edges <- edges |> 
+  left_join(
+    read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid"    
+  ) |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+
+nodes <- as_tibble(sf::st_read(file.path(dir_ssn, "nodes.gpkg")))
+errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) |> as_tibble()
+
+#now overwrite after drops
+#SSNbler::lines_to_lsn is called again after pipe, 'streams' is first arg
+edges <- edges |> 
+  select(-fromnode, -tonode) |> 
+  filter(
+    !(NHDPlusID %in% c(
+      #strays contributing to 'n>1 outlets found'
+      #could also declare outlet slice_max(dasqkm_tot) then filter out and pull
+      edges |> 
+        inner_join(
+          nodes |> filter(nodecat == "Outlet") ,
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(desc(dasqkm_tot)) |> 
+        slice_tail(n = -1) |>  
+        pull(NHDPlusID)
+      ,
+      #drop the edge with smallest drainage area at complex converg
+      edges |> 
+        inner_join(
+          errors |> filter(error == "Complex Confluence"),
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(tonode, dasqkm_tot) |> 
+        slice_min(dasqkm_tot, by = tonode) |> 
+        pull(NHDPlusID)
+      ,
+      #keep the shorter path in a divergence, obvi could do otherwise
+      edges |> 
+        semi_join(
+          errors |> filter(error == "Downstream Divergence"),
+          by = c("fromnode" = "pointid")    
+        ) |> 
+        slice_max(length_km) |> pull(NHDPlusID)
+      ,
+      #drop tiny headwaters with 0 dasqkm_tot
+      edges |> filter(dasqkm_tot == 0) |> pull(NHDPlusID)
+    ))
+  ) |> 
+  SSNbler::lines_to_lsn(
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+rm(nodes, errors)
+
+#snap tol of 100ft is good based on prior work
+obs <- SSNbler::sites_to_lsn(
+  sites = sf_sites_lc |> 
+    filter(strm == as.character(edges$strm[1]))
+  ,
+  edges = edges,
+  lsn_path = dir_ssn,
+  file_name = "obs",
+  snap_tolerance = 100,
+  save_local = TRUE,
+  overwrite = TRUE
+)
+#but do it again to add edge covars now that points are associated to lines
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:VEMA),
+      by = "rid")
+  ,
+  edges = edges,
+  lsn_path = dir_ssn,
+  file_name = "obs",
+  snap_tolerance = 100,
+  save_local = TRUE,
+  overwrite = TRUE
+)
+
+#for prediction points,
+#use startpoints of reaches that are not sampled
+#can add length or other filter, here trying longer than 100m
+pred_lines <- edges |> 
+    anti_join(as_tibble(obs), by = "rid") |> #ggplot() + stat_ecdf(aes(length_km))
+    filter(length_km > 0.1)
+pred_pts <- pred_lines |> 
+  as_tibble() |> 
+  select(-Shape) |> 
+  mutate(geometry = lwgeom::st_startpoint(pred_lines)) |> 
+  st_as_sf()
+
+preds <- SSNbler::sites_to_lsn(
+  sites = pred_pts,
+  edges = edges,
+  save_local = TRUE,
+  lsn_path = dir_ssn,
+  file_name = "preds.gpkg",
+  snap_tolerance = 100,
+  overwrite = TRUE
+)
+rm(pred_lines, pred_pts)
+
+#add edge length and updist
+edges <- SSNbler::updist_edges(
+  edges = edges,
+  save_local = TRUE,
+  lsn_path = dir_ssn,
+  calc_length = TRUE 
+)
+#add same for sites
+site.list <- SSNbler::updist_sites(
+  sites = list(
+    obs = obs,
+    preds = preds
+  ),
+  edges = edges,
+  length_col = "Length",
+  save_local = TRUE,
+  lsn_path = dir_ssn
+)
+
+#add propinfluence (relative weight at confluence) and additivefunctionval (product of propinf along path)
+#could use slope or other weighting than dasqkm_tot
+edges <- SSNbler::afv_edges(
+  edges = edges,
+  infl_col = "dasqkm_tot",
+  segpi_col = "areaPI",
+  afv_col = "afvArea",
+  lsn_path = dir_ssn
+)
+#now add those to the obs and preds
+#which take the value of their associated edges (possibly duplicately)
+site.list <- SSNbler::afv_sites(
+  sites = site.list,
+  edges = edges,
+  afv_col = "afvArea",
+  save_local = TRUE,
+  lsn_path = dir_ssn
+)
+
+#careful with overwrite. fairly aggressive (and verbose) about delete and recreate
+ssn <- SSNbler::ssn_assemble(
+  edges = edges,
+  lsn_path = dir_ssn,
+  obs_sites = site.list$obs,
+  preds_list = site.list["preds"],
+  ssn_path = file.path(dir_ssn, paste0(strm_to_ssn2,".ssn")),
+  import = TRUE,
+  check = TRUE,
+  afv_col = "afvArea",
+  overwrite = TRUE
+)
+
+```
+
+```{r ssnbler_abernathy, eval=FALSE}
+rm(edges, obs, preds, ssn)
+strm_to_ssn2 <- "Abernathy"
+dir_ssn <- file.path("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/ssn_data", strm_to_ssn2)
+#first pass reveals issues
+edges <- SSNbler::lines_to_lsn(
+  streams = sf_hr_flw_lc |> filter(str_detect(strm, strm_to_ssn2)),
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+
+mapview::mapview(list(
+  flw = sf::st_read(file.path(dir_ssn, "edges.gpkg")),
+  nod = sf::st_read(file.path(dir_ssn, "nodes.gpkg")),
+  err = sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) #|> as_tibble() |> count(nodecat, error)
+  ), zcol = c("dasqkm_tot","nodecat","error"))
+
+edges <- edges |> 
+  left_join(
+    read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid"    
+  ) |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+
+nodes <- as_tibble(sf::st_read(file.path(dir_ssn, "nodes.gpkg")))
+errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) |> as_tibble()
+
+#now overwrite after drops
+#the divergence here 'gets lucky' but illustrates potential to break network
+#if dropped (currently longer) edge breaks network and creates secondary subgraph
+#
+#SSNbler::lines_to_lsn is called again after pipe, 'streams' is first arg
+edges <- edges |> 
+  select(-fromnode, -tonode) |> 
+  filter(
+    !(NHDPlusID %in% c(
+      #strays contributing to 'n>1 outlets found'
+      #could also declare outlet slice_max(dasqkm_tot) then filter out and pull
+      edges |> 
+        inner_join(
+          nodes |> filter(nodecat == "Outlet") ,
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(desc(dasqkm_tot)) |> 
+        slice_tail(n = -1) |>  
+        pull(NHDPlusID)
+      ,
+      #drop the edge with smallest drainage area at complex converg
+      edges |> 
+        inner_join(
+          errors |> filter(error == "Complex Confluence"),
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(tonode, dasqkm_tot) |> 
+        slice_min(dasqkm_tot, by = tonode) |> 
+        pull(NHDPlusID)
+      ,
+      #keep the shorter path in a divergence, obvi could do otherwise
+      edges |> 
+        semi_join(
+          errors |> filter(error == "Downstream Divergence"),
+          by = c("fromnode" = "pointid")    
+        ) |> 
+        slice_max(length_km) |> pull(NHDPlusID)
+      ,
+      #drop tiny headwaters with 0 dasqkm_tot
+      edges |> filter(dasqkm_tot == 0) |> pull(NHDPlusID)
+    ))
+  ) |> 
+  SSNbler::lines_to_lsn(
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+rm(nodes, errors)
+
+#need to increase snaptol to capture ABR014
+obs <- SSNbler::sites_to_lsn(
+  sites = sf_sites_lc |> 
+    filter(strm == as.character(edges$strm[1]))
+  ,
+  edges = edges,
+  lsn_path = dir_ssn,
+  file_name = "obs",
+  snap_tolerance = 110,
+  save_local = TRUE,
+  overwrite = TRUE
+)
+
+# mapview::mapview(list(
+#  edges = edges, 
+#  notsnapped = sf_sites_lc |> 
+#    filter(strm == as.character(edges$strm[1]), 
+#           !(site %in% obs$site))
+# ))
+
+#do it again to add edge covars now that points are associated to lines
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:VEMA),
+      by = "rid")
+  ,
+  edges = edges,
+  lsn_path = dir_ssn,
+  file_name = "obs",
+  snap_tolerance = 110,
+  save_local = TRUE,
+  overwrite = TRUE
+)
+
+#for prediction points,
+#use startpoints of reaches that are not sampled
+#can add length or other filter, here trying longer than 100m
+pred_lines <- edges |> 
+    anti_join(as_tibble(obs), by = "rid") |> #ggplot() + stat_ecdf(aes(length_km))
+    filter(length_km > 0.1)
+pred_pts <- pred_lines |> 
+  as_tibble() |> 
+  select(-Shape) |> 
+  mutate(geometry = lwgeom::st_startpoint(pred_lines)) |> 
+  st_as_sf()
+
+preds <- SSNbler::sites_to_lsn(
+  sites = pred_pts,
+  edges = edges,
+  save_local = TRUE,
+  lsn_path = dir_ssn,
+  file_name = "preds.gpkg",
+  snap_tolerance = 100,
+  overwrite = TRUE
+)
+rm(pred_lines, pred_pts)
+
+#add edge length and updist
+edges <- SSNbler::updist_edges(
+  edges = edges,
+  save_local = TRUE,
+  lsn_path = dir_ssn,
+  calc_length = TRUE 
+)
+#add same for sites
+site.list <- SSNbler::updist_sites(
+  sites = list(
+    obs = obs,
+    preds = preds
+  ),
+  edges = edges,
+  length_col = "Length",
+  save_local = TRUE,
+  lsn_path = dir_ssn
+)
+
+#add propinfluence (relative weight at confluence) and additivefunctionval (product of propinf along path)
+#could use slope or other weighting than dasqkm_tot
+edges <- SSNbler::afv_edges(
+  edges = edges,
+  infl_col = "dasqkm_tot",
+  segpi_col = "areaPI",
+  afv_col = "afvArea",
+  lsn_path = dir_ssn
+)
+#now add those to the obs and preds
+#which take the value of their associated edges (possibly duplicately)
+site.list <- SSNbler::afv_sites(
+  sites = site.list,
+  edges = edges,
+  afv_col = "afvArea",
+  save_local = TRUE,
+  lsn_path = dir_ssn
+)
+
+#careful with overwrite. fairly aggressive (and verbose) about delete and recreate
+ssn <- SSNbler::ssn_assemble(
+  edges = edges,
+  lsn_path = dir_ssn,
+  obs_sites = site.list$obs,
+  preds_list = site.list["preds"],
+  ssn_path = file.path(dir_ssn, paste0(strm_to_ssn2,".ssn")),
+  import = TRUE,
+  check = TRUE,
+  afv_col = "afvArea",
+  overwrite = TRUE
+)
+
+```
+
+```{r ssnbler_germany, eval=FALSE}
+rm(edges, obs, preds, ssn)
+strm_to_ssn2 <- "Germany"
+dir_ssn <- file.path("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/ssn_data", strm_to_ssn2)
+#first pass reveals issues
+edges <- SSNbler::lines_to_lsn(
+  streams = sf_hr_flw_lc |> filter(str_detect(strm, strm_to_ssn2)),
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+
+mapview::mapview(list(
+  flw = sf::st_read(file.path(dir_ssn, "edges.gpkg")),
+  nod = sf::st_read(file.path(dir_ssn, "nodes.gpkg")),
+  err = sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) #|> as_tibble() |> count(nodecat, error)
+  ), zcol = c("dasqkm_tot","nodecat","error"))
+
+edges <- edges |> 
+  left_join(
+    read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid"    
+  ) |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+
+nodes <- as_tibble(sf::st_read(file.path(dir_ssn, "nodes.gpkg")))
+errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) |> as_tibble()
+
+#now overwrite after drops
+#several weirdnesses, opting to 'hand prune' other than outlet/strays
+#SSNbler::lines_to_lsn is called again after pipe, 'streams' is first arg
+edges <- edges |> 
+  select(-fromnode, -tonode) |> 
+  filter(
+    !(NHDPlusID %in% c(
+      #strays contributing to 'n>1 outlets found'
+      #could also declare outlet slice_max(dasqkm_tot) then filter out and pull
+      edges |> 
+        inner_join(
+          nodes |> filter(nodecat == "Outlet") ,
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(desc(dasqkm_tot)) |> 
+        slice_tail(n = -1) |>  
+        pull(NHDPlusID)
+      ,
+      #drop the edge with smallest drainage area at complex converg
+      # edges |> 
+      #   inner_join(
+      #     errors |> filter(error == "Complex Confluence"),
+      #     by = c("tonode" = "pointid")    
+      #   ) |> 
+      #   arrange(tonode, dasqkm_tot) 
+      "55000300272053", #also fixes divergence
+      "55000300323375", #would have been correct
+      #divergences are a bit of a mess here
+      #dropping tiny links to break apart headwater overlap
+      "55000300400709","55000300246167"
+      # edges |> 
+      #   semi_join(
+      #     errors |> filter(error == "Downstream Divergence"),
+      #     by = c("fromnode" = "pointid")    
+      #   ) 
+      ,
+      #drop tiny headwaters with 0 dasqkm_tot
+      edges |> filter(dasqkm_tot == 0) |> pull(NHDPlusID)
+    ))
+  ) |> 
+  SSNbler::lines_to_lsn(
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+rm(nodes, errors)
+
+#back to 100 snaptol
+obs <- SSNbler::sites_to_lsn(
+  sites = sf_sites_lc |> 
+    filter(strm == as.character(edges$strm[1]))
+  ,
+  edges = edges,
+  lsn_path = dir_ssn,
+  file_name = "obs",
+  snap_tolerance = 100,
+  save_local = TRUE,
+  overwrite = TRUE
+)
+#do it again to add edge covars now that points are associated to lines
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:VEMA),
+      by = "rid")
+  ,
+  edges = edges,
+  lsn_path = dir_ssn,
+  file_name = "obs",
+  snap_tolerance = 110,
+  save_local = TRUE,
+  overwrite = TRUE
+)
+
+#for prediction points,
+#use startpoints of reaches that are not sampled
+#can add length or other filter, here trying longer than 100m
+pred_lines <- edges |> 
+    anti_join(as_tibble(obs), by = "rid") |> #ggplot() + stat_ecdf(aes(length_km))
+    filter(length_km > 0.1)
+pred_pts <- pred_lines |> 
+  as_tibble() |> 
+  select(-Shape) |> 
+  mutate(geometry = lwgeom::st_startpoint(pred_lines)) |> 
+  st_as_sf()
+
+preds <- SSNbler::sites_to_lsn(
+  sites = pred_pts,
+  edges = edges,
+  save_local = TRUE,
+  lsn_path = dir_ssn,
+  file_name = "preds.gpkg",
+  snap_tolerance = 100,
+  overwrite = TRUE
+)
+rm(pred_lines, pred_pts)
+
+#add edge length and updist
+edges <- SSNbler::updist_edges(
+  edges = edges,
+  save_local = TRUE,
+  lsn_path = dir_ssn,
+  calc_length = TRUE 
+)
+#add same for sites
+site.list <- SSNbler::updist_sites(
+  sites = list(
+    obs = obs,
+    preds = preds
+  ),
+  edges = edges,
+  length_col = "Length",
+  save_local = TRUE,
+  lsn_path = dir_ssn
+)
+
+#add propinfluence (relative weight at confluence) and additivefunctionval (product of propinf along path)
+#could use slope or other weighting than dasqkm_tot
+edges <- SSNbler::afv_edges(
+  edges = edges,
+  infl_col = "dasqkm_tot",
+  segpi_col = "areaPI",
+  afv_col = "afvArea",
+  lsn_path = dir_ssn
+)
+#now add those to the obs and preds
+#which take the value of their associated edges (possibly duplicately)
+site.list <- SSNbler::afv_sites(
+  sites = site.list,
+  edges = edges,
+  afv_col = "afvArea",
+  save_local = TRUE,
+  lsn_path = dir_ssn
+)
+
+#careful with overwrite. fairly aggressive (and verbose) about delete and recreate
+ssn <- SSNbler::ssn_assemble(
+  edges = edges,
+  lsn_path = dir_ssn,
+  obs_sites = site.list$obs,
+  preds_list = site.list["preds"],
+  ssn_path = file.path(dir_ssn, paste0(strm_to_ssn2,".ssn")),
+  import = TRUE,
+  check = TRUE,
+  afv_col = "afvArea",
+  overwrite = TRUE
+)
+
+```
+
+## corrr of LC SSN
+
+Prior to model fitting, we examined the underlying physiographic differences among basins as captured in the NHDplus measures and evaluated the correlations among these measures for the reach segments associated with IMW sites.
+
+```{r sf_ssn_lc_edges}
+sf_ssn_lc_edges <- map(
+  grep(".ssn$",
+       list.dirs("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/ssn_data"),
+       value = T
+  )
+  ,
+  ~st_read(file.path(.x, "edges.gpkg"))
+) |> 
+  bind_rows() |> 
+  mutate(
+    strm = factor(strm, levels = names(pal_strm[5:7]))
+  )
+
+```
+
+```{r sf_ssn_lc_sites}
+sf_ssn_lc_sites <- map(
+  grep(".ssn$",
+       list.dirs("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/ssn_data"),
+       value = T
+  )
+  ,
+  ~st_read(file.path(.x, "sites.gpkg"))
+) |> 
+  bind_rows() |> 
+  mutate(
+    strm = factor(strm, levels = names(pal_strm[5:7]))
+  )
+
+```
+
+```{r CANDROP_sf_ssn_sites_edges_mapview_check, eval=FALSE}
+list(
+  sites = sf_ssn_lc_sites,
+  edges = sf_ssn_lc_edges
+) |> 
+  mapview::mapview()
+```
+
+```{r CANDROP_eda_reach_da_elev_slope, eval=FALSE}
+d <- as_tibble(sf_ssn_lc_edges) |> 
+  select(strm, NHDPlusID, dasqkm_tot, elev_min, slope) |> 
+  left_join(
+    as_tibble(sf_ssn_lc_sites) |> 
+      distinct(NHDPlusID, .keep_all = T) |> #no effect but to confirm 1 reach per site
+      select(NHDPlusID, site),
+    by = "NHDPlusID"
+  ) |> 
+  mutate(imw_sampled = if_else(!is.na(site), "with site", "without site"))
+
+gg_da <- ggplot(d) +
+  #geom_histogram(
+  geom_freqpoly(
+    aes(dasqkm_tot, color = strm, 
+        #fill = strm, 
+        group = strm), 
+    #alpha = 0.7,
+    bins = 15 #12
+    #,position = position_dodge(width = 0.2)
+    ) +
+  scale_x_log10("Reach drainage area", n.breaks = 6, labels = scales::label_log()) +
+  scale_color_manual(values = pal_strm, aesthetics = c("color", "fill")) +
+  facet_wrap(~imw_sampled, scales = "free_y", ncol = 1) +
+  theme(legend.position = "top", legend.title = element_blank())
+
+# #elevation as alpha'd stacked bars
+# gg_el <- suppressWarnings(
+#   d |> 
+#     mutate(elev_min = cut(elev_min, breaks = seq(0, 800, by = 200))) |> 
+#     summarise(n = n(), .by = c(imw_sampled, strm, elev_min)) |> 
+#     #mutate() #add a percentage?
+#     ggplot() +
+#     geom_col(aes(strm, n, fill = strm, alpha = elev_min)) +
+#     scale_color_manual(values = pal_strm, aesthetics = c("color", "fill")) +
+#     scale_alpha_discrete(range = c(0.3, 1)) +
+#     guides(fill = guide_none()) +
+#     facet_wrap(~imw_sampled, scales = "free_y", ncol = 1) +
+#     labs(y = "")
+# )
+
+# #ggplot(d) + geom_freqpoly(aes(slope, color = strm), bins = 8) + scale_x_continuous(limits =  c(0, 1.5)) + facet_wrap(~imw_sampled, scales = "free_y", ncol = 1)
+# #slope as alpha'd stacked bars
+# gg_sl <- suppressWarnings(
+#   d |> 
+#     mutate(slope = cut(slope, breaks = c(0, 0.05, 0.1, 0.2, 1.5))) |> 
+#     summarise(n = n(), .by = c(imw_sampled, strm, slope)) |> 
+#     #mutate() #add a percentage?
+#     ggplot() +
+#     #geom_col(aes(n, strm, fill = strm, alpha = slope)) +
+#     geom_col(aes(strm, n, fill = strm, alpha = slope)) +
+#     scale_color_manual(values = pal_strm, aesthetics = c("color", "fill")) +
+#     scale_alpha_discrete(range = c(0.3, 1)) +
+#     guides(fill = guide_none()) +
+#     facet_wrap(~imw_sampled, scales = "free_y", ncol = 1) +
+#     labs(x = "")
+# )
+
+tb <- d |> 
+  summarise(
+    n = n(),
+    across(
+      dasqkm_tot, 
+      list(min = ~min(.), max = ~max(.)),
+      .names = "DA {fn}"
+      ), .by = c(imw_sampled, strm)
+  ) |> 
+  pivot_wider(names_from = imw_sampled, values_from = -c(imw_sampled, strm), names_sep = " ") |> 
+  mutate(pct = `n with site` / (`n with site` + `n without site`)) |> 
+  select(strm, starts_with("n with"), pct, everything()) |> 
+  gt(rowname_col = "strm") |> 
+  cols_label_with(fn = ~str_remove(., "without site|with site")) |> 
+  tab_spanner(label = "Reach segments  \nwithout sites", columns = contains("without")) |> 
+  tab_spanner(label = " Reach segments  \nwith IMW sites", columns = c("n with site", "pct", contains("with site"))) |> 
+  tab_style(
+    style = cell_borders("left"), locations = cells_body("n with site")
+  ) |> 
+  fmt_percent("pct", decimals = 1) |> 
+  fmt_number(contains("min"), decimals = 4) |> 
+  fmt_number(contains("max"), decimals = 1)
+
+## DA only
+# wrap_table(tb, panel = "full", space = "fixed") + 
+#   gg_da + 
+#   plot_layout(ncol = 1) + 
+#   plot_annotation(
+#     title = "Drainage area of NHDPlus HR reaches by IMW basin",
+#     subtitle = "Distinguished by IMW site association"
+#     )
+
+wrap_table(tb, panel = "full", space = "fixed") /
+((gg_da + gg_sl) + plot_layout(nrow = 1))  + 
+  plot_annotation(
+    title = "Drainage area of NHDPlus HR reaches by IMW basin",
+    subtitle = "Distinguished by IMW site association"
+    )
+
+
+#bars by bins
+d |> 
+  mutate(slope = cut(slope, breaks = c(0, 0.05, 0.1, 0.2, 1.5))) |> 
+  summarise(n = n(), .by = c(strm, imw_sampled, slope)) |> 
+  mutate(pct = n / sum(n), .by = c(strm, imw_sampled)) |> 
+  ggplot() +
+  geom_col(
+    aes(slope, n, fill = strm), 
+    position = position_dodge2(preserve = "single")
+  ) +
+  scale_color_manual(values = pal_strm, aesthetics = c("color", "fill")) +
+  guides(fill = guide_none()) + 
+  facet_wrap(~imw_sampled, scales = "free_y", ncol = 1)
+
+d |> 
+  mutate(elev_min = cut(elev_min, breaks = seq(0, 800, by = 200))) |> 
+  summarise(n = n(), .by = c(strm, imw_sampled, elev_min)) |> 
+  mutate(pct = n / sum(n), .by = c(strm, imw_sampled)) |> 
+  ggplot() +
+  geom_col(
+    aes(elev_min, 
+        #pct,
+        n,
+        fill = strm, 
+        #alpha = imw_sampled
+        ), 
+    position = position_dodge2(preserve = "single")
+  ) +
+  scale_color_manual(values = pal_strm, aesthetics = c("color", "fill")) +
+  scale_alpha_manual(values = c(0.4, 0.9)) +
+  guides(fill = guide_none()) + 
+  facet_wrap(~imw_sampled, scales = "free_y", ncol = 1)
+
+
+#bin2d
+d |> 
+  split(~imw_sampled) |> 
+  map(
+    ~ggplot(.x) +
+      stat_bin_2d(
+        aes(elev_min, slope, 
+            fill = strm, alpha = after_stat(count))
+        ,
+        bins = c(10, 5)
+      ) +
+      scale_color_manual(values = pal_strm, aesthetics = c("color", "fill")) +
+      scale_alpha(range = c(0.3, 1)) +
+      guides(fill = guide_none()) +
+      facet_wrap(~strm, ncol = 1)
+  ) |> 
+  wrap_plots(ncol = 2)
+
+#ecdf arguably the best and simplest way to show that Germany has higher proportion 'mid-steep' reaches but Abernathy has more 'steepest'?
+#plus points?
+#d |> summarise(across(slope, max), .by = c(strm, imw_sampled))
+{
+  ggplot(d) + 
+    stat_ecdf(aes(slope, color = strm), show.legend = F) + 
+    geom_vline(xintercept = c(0.1, 0.2), linetype = 2, alpha = 0.5) + 
+    scale_x_continuous(limits = c(0, 1)) +
+    scale_color_manual(values = pal_strm, aesthetics = c("color", "fill")) +
+    facet_wrap(~imw_sampled, ncol = 1) #+ theme(legend.position = "top")
+  }+{
+    ggplot(d) +
+      geom_point(
+        aes(elev_min, slope,
+            color = strm, 
+            alpha = imw_sampled,
+            shape = imw_sampled,
+            size = imw_sampled
+        )
+        , show.legend = F
+      ) +
+      geom_vline(xintercept = c(300), linetype = 2) + #linewidth = 0.5
+      geom_hline(yintercept = c(0.1), linetype = 3) + #linewidth = 0.5
+      scale_y_continuous(limits = c(0, 0.75)) +
+      scale_color_manual(values = pal_strm, aesthetics = c("color", "fill")) +
+      scale_alpha_manual(values = c(1, 0.5)) +
+      scale_size_manual(values = c(2, 0.6)) +
+      #facet_wrap(~strm + imw_sampled, ncol = 2)
+      facet_wrap(~strm, nrow = 1) +
+      #facet_wrap(~imw_sampled + strm, ncol = 3) +
+      labs(x = "Reach segment min elevation")
+  }
+```
+
+
+Germany is a slightly smaller basin, with a maximum drainage area (DA) of ~60km^2 vs ~75km^2 for Mill and Abernathy. 
+The minimum and median DA of reaches with IMW sampling was also smallest in Germany. 
+The average DA of reaches with IMW sampling was largest in Abernathy (~6.5km^2), but the sampled reach with the largest contributing area in this stream (43km^2) was appreciably smaller than in Mill and Germany Creeks, where IMW sampling included lower mainstem sites near the basin maximum DA.
+
+Abernathy and Germany Creeks both include higher elevation reaches than Mill, and the median reach elevation was more than 50m higher Germany (339m vs 259 in Abernathy and 276 in Mill).
+The average and maximum elevation of sampled reaches was appreciably lower than the whole network values in Abernathy, whereas average and maximum elevations were closer to background in Germany and Mill.
+
+Germany had the greatest reach slopes on average, but Abernathy had the steepest reaches. 
+The slopes of IMW-sampled reaches in Germany were closer to the (steeper) basin-wide average than in Abernathy, where sampled reaches on average had lower slopes than both the network as a whole and the average in Mill Creek.
+
+Take-aways:
+ - sampled reaches captured more of the gradient of DA in Mill and Germany Creek, and more of the gradient of slope in Germany
+ - In Abernathy, on average (median) sampled reaches were lower slope and lower elevation and higher DA than both the network background and the other two streams.
+  - The steeper, higher elevation headwaters in the NE and the upper portions of the major tributary Cameron Creek had lower site density; inference in these areas carries greater uncertainty
+
+```{r d_gg_gt}
+d <- as_tibble(sf_ssn_lc_edges) |> 
+  select(strm, NHDPlusID, dasqkm_tot, elev_min, slope) |> 
+  left_join(
+    as_tibble(sf_ssn_lc_sites) |> 
+      distinct(NHDPlusID, .keep_all = T) |> #no effect but to confirm 1 reach per site
+      select(NHDPlusID, site),
+    by = "NHDPlusID"
+  ) |> 
+  mutate(imw_sampled = if_else(!is.na(site), "with site", "without site"))
+
+d_gt <- d |> 
+  summarise(
+    n = n(),
+    across(
+      c(da = dasqkm_tot, elev = elev_min, slope), 
+      list(min = ~min(.), med = ~median(.), max = ~max(.))
+      #, .names = "DA {fn}"
+      ), .by = c(imw_sampled, strm)
+  ) |> 
+  mutate(n_pct = n / sum(n), .by = strm) |> 
+  select(strm, imw_sampled, n, n_pct, everything()) |> 
+  arrange(strm) 
+```
+
+```{r gt_reach_da_elev_slope}
+# d |> 
+#   summarise(
+#     n = n(),
+#     across(
+#       c(dasqkm_tot), 
+#       list(min = ~min(.), med = ~median(.), max = ~max(.))
+#       , .names = "DA {fn}"
+#       ), .by = c(imw_sampled, strm)
+#   ) |> 
+#   pivot_wider(names_from = imw_sampled, values_from = -c(imw_sampled, strm), names_sep = " ") |>
+#   mutate(pct = `n with site` / (`n with site` + `n without site`)) |>
+#   select(strm, starts_with("n with"), pct, everything()) |>
+#   gt(rowname_col = "strm") |> 
+#   cols_label_with(fn = ~str_remove(., "without site|with site")) |> 
+#   tab_spanner(label = "Reach segments  \nwithout sites", columns = contains("without")) |> 
+#   tab_spanner(label = " Reach segments  \nwith IMW sites", columns = c("n with site", "pct", contains("with site"))) |> 
+#   tab_style(
+#     style = cell_borders("left"), locations = cells_body("n with site")
+#   ) |> 
+#   fmt_percent("pct", decimals = 1) |> 
+#   fmt_number(contains("min"), decimals = 4) |> 
+#   fmt_number(contains("max"), decimals = 1)
+
+d_gt |> 
+  gt(groupname_col = "strm", rowname_col = "imw_sampled") |> 
+  cols_label_with(fn = ~str_remove(., "da_|elev_|slope_")) |> 
+  tab_spanner(label = "NHDplusHR reach \nDrainage area", columns = contains("da_")) |> 
+  tab_spanner(label = "NHDplusHR reach \nMin. elevation", columns = contains("elev_")) |> 
+  tab_spanner(label = "NHDplusHR reach \nSlope", columns = contains("slope_")) |> 
+  #tab_style(style = cell_borders("right"), locations = cells_body("n_pct")) |> 
+  tab_style(style = cell_borders("left"), locations = cells_body(contains("_min"))) |> 
+  tab_style(style = cell_fill(color = pal_strm["Mill Creek"], alpha = 0.7), locations = cells_body(rows = strm == "Mill Creek" & imw_sampled == "with site")) |> 
+  tab_style(style = cell_fill(color = pal_strm["Abernathy Creek"], alpha = 0.7), locations = cells_body(rows = strm == "Abernathy Creek" & imw_sampled == "with site")) |> 
+  tab_style(style = cell_fill(color = pal_strm["Germany Creek"], alpha = 0.7), locations = cells_body(rows = strm == "Germany Creek" & imw_sampled == "with site")) |> 
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = map(
+      5:13,
+      ~cells_body(columns = .x, rows = which.max(unlist(d_gt[,.x])))
+    )
+  ) |> 
+  fmt_percent("n_pct", decimals = 1) |> 
+  fmt_number(c("da_min"), decimals = 3) |> 
+  fmt_number(c("da_med"), decimals = 2) |> 
+  fmt_number(c("da_max"), decimals = 0) |> 
+  fmt_number(contains("elev_"), decimals = 0) |> 
+  fmt_number(c("slope_min"), decimals = 5) |> 
+  fmt_number(c("slope_med","slope_max"), decimals = 2)
+
+```
+
+```{r gg_reach_da_elev_slope}
+  # ggplot() +
+  #   geom_point(
+  #     data = d |> 
+  #       filter(imw_sampled == "without site") |> 
+  #       mutate(slope_f = cut(slope,  breaks = c(0, 0.05, 0.1, 0.2, 1.5)))
+  #     ,
+  #     aes(elev_min, slope, color = slope_f), alpha = 0.5, shape = 20, size = 0.5,
+  #     show.legend = F
+  #   ) +  
+  #   geom_point(
+  #     data = d |> 
+  #       filter(imw_sampled == "with site") |> 
+  #       mutate(slope_f = cut(slope,  breaks = c(0, 0.05, 0.1, 0.2, 1.5)))
+  #     ,
+  #     aes(elev_min, slope, fill = slope_f), alpha = 1, shape = 24, size = 2, color = "black",
+  #     show.legend = F
+  #   ) +
+  #   geom_vline(xintercept = 1, color = "#ADD8E6", linetype = 2) + #linewidth = 0.5
+  #   geom_vline(xintercept = 200, color = "#A45DEC", linetype = 2) + #linewidth = 0.5
+  #   geom_vline(xintercept = 400, color = "#BF4CA0", linetype = 2) + #linewidth = 0.5
+  #   geom_vline(xintercept = 600, color = "#FFA500", linetype = 2) + #linewidth = 0.5
+  #   #geom_hline(yintercept = c(0.1), linetype = 3) + #linewidth = 0.5
+  #   scale_y_continuous(limits = c(0, 0.75)) +
+  #   scale_color_manual(values = c("lightblue","darkblue","tan","orange"), aesthetics = c("color","fill")) +
+  #   scale_alpha_manual(values = c(1, 0.5)) +
+  #   scale_shape_manual(values = c(17, 20)) +
+  #   scale_size_manual(values = c(2, 0.6)) +
+  #   facet_wrap(~strm, nrow = 1) +
+  #   labs(x = "Reach min. elevation", y = "Reach slope")
+
+{  
+  ggplot() +
+    geom_point(
+      data = d |> 
+        filter(imw_sampled == "without site") |> 
+        mutate(slope_f = cut(slope,  breaks = c(0, 0.05, 0.1, 0.2, 1.5)))
+      ,
+      aes(dasqkm_tot, elev_min, color = slope_f), alpha = 0.8, shape = 20, size = 0.5,
+      show.legend = F
+    ) +  
+    geom_point(
+      data = d |> 
+        filter(imw_sampled == "with site") |> 
+        mutate(slope_f = cut(slope,  breaks = c(0, 0.05, 0.1, 0.2, 1.5)))
+      ,
+      aes(dasqkm_tot, elev_min, fill = slope_f), alpha = 1, shape = 24, size = 2, color = "black",
+      show.legend = F
+    ) +
+    geom_hline(yintercept = 1, color = "#ADD8E6", linetype = 2) + #linewidth = 0.5
+    geom_hline(yintercept = 200, color = "#A45DEC", linetype = 2) + #linewidth = 0.5
+    geom_hline(yintercept = 400, color = "#BF4CA0", linetype = 2) + #linewidth = 0.5
+    geom_hline(yintercept = 600, color = "#FFA500", linetype = 2) + #linewidth = 0.5
+    scale_x_log10(
+      breaks = scales::breaks_log(), 
+      labels = scales::label_log()
+    ) +
+    scale_color_manual(values = c("lightblue","darkblue","tan","orange"), aesthetics = c("color","fill")) +
+    scale_alpha_manual(values = c(1, 0.5)) +
+    scale_shape_manual(values = c(17, 20)) +
+    scale_size_manual(values = c(2, 0.6)) +
+    facet_wrap(~strm, nrow = 1) +
+    labs(
+      x = "Reach DA (km^2)", y = "Reach min. elev. (m)"
+    )
+  } / {
+    sf_ssn_lc_edges |> 
+      select(strm, NHDPlusID, dasqkm_tot, elev_min, slope) |> 
+      mutate(elev_f = cut(slope,  breaks = seq(0, 800, by = 200))) |> 
+      ggplot() +
+      geom_sf(aes(linewidth = dasqkm_tot, color = elev_min)) +
+      geom_sf(data = st_centroid(sf_ssn_lc_sites), shape = 17) +
+      scale_color_gradientn(name = "Elevation", colours = c("lightblue","purple","orange"), breaks = seq(0, 800, by = 200)) +
+      scale_linewidth(limits = c(0,80), range = c(0.4,2)) +
+      guides(linewidth = guide_none()) +
+      ggspatial::annotation_scale() +
+      facet_wrap(~strm, nrow = 1) +
+      labs(subtitle = "Reach min. elevation") +
+      theme(axis.text = element_text(size = 4))
+  } / {
+    sf_ssn_lc_edges |> 
+      select(strm, NHDPlusID, dasqkm_tot, elev_min, slope) |> 
+      mutate(slope_f = cut(slope,  breaks = c(0, 0.05, 0.1, 0.2, 1.5))) |> 
+      ggplot() +
+      geom_sf(aes(linewidth = dasqkm_tot, color = slope_f)) +
+      geom_sf(data = st_centroid(sf_ssn_lc_sites), shape = 17) +
+      scale_color_manual(name = "Slope", values = c("lightblue","darkblue","tan","orange")) +
+      scale_linewidth(limits = c(0,80), range = c(0.4,2)) +
+      guides(linewidth = guide_none(), color = guide_colorsteps()) +
+      ggspatial::annotation_scale() +
+      facet_wrap(~strm, nrow = 1) +
+      labs(subtitle = "Reach slope") +
+      theme(axis.text = element_text(size = 4))
+  } + 
+  plot_layout(guides = "collect")
+
+#ggsave("f_LC_reach_da_elev_slope.png", width = 7.5, height = 10, units = "in")
+
+```
+
+_(@tbl-lc_cor_indep)_
+
+The expected negative Spearman correlation of elevation and DA (i.e., lower elevation with larger DA) was strongest in Mill (-0.77) and moderate in Germany (-0.56) and Abernathy (-0.46), based on NHDplusHR values at reaches with IMW sampling. These correlations were consistent with and stronger than those for the full set of reaches, which included numerous low-order tributaries at lower elevations. 
+
+Slope at IMW-sampled reaches was strongly negatively correlated with DA in Germany and Abernathy Creeks (-0.76 and -0.58 respectively), and these relationships were consistent with (Abernathy) and stronger than those for the full set of reaches. In contrast, the pattern of lower slopes at larger DA was weaker in Mill Creek sampled reaches (-0.25), despite a similarly moderately strong relationship for the full basin (-0.55). 
+
+Relationships between reach slope and elevation differed among basins and within streams between sampled and background reaches. In sampled reaches in Mill Creek, slope was uncorrelated with elevation, in contrast with the weak (and somewhat unusual) negative basin-wide relationship indicating low slopes at higher elevations (0.01 vs -0.22). The sampled reaches in Abernathy Creek lacked the moderately strong positive correlation that was present across the full set of reaches (0.03 vs 0.45), indicating no tendency for higher elevation sites to be steeper. In Germany Creek, the positive correlation at sampled reaches represented a moderate strengthening of the weakly positive relationship basin-wide (0.55 vs 0.12). 
+
+Characteristic channel width at IMW sites, measured as the median through years of the per-year median bankfull width of per-site transects, was strongly positively correlated with drainage area in all LC networks and strongly so in Mill Creek. The expected negative correlation with elevation (i.e., narrower where higher) was also moderately strong in all 3 streams. A negative correlation of width with slope (i.e., narrower where steeper) was moderately strong in the sampled reaches of Germany Creek but relatively weak in both of the other streams.
+
+
+Taken together, these different relationships... in model fitting.
+
+
+```{r ssn_lc_edges_sites_cor}
+## enough non-normality to justify Spearman corr
+
+ssn_lc_edges_cor <- as_tibble(sf_ssn_lc_edges) |> 
+  filter(!(NHDPlusID %in% sf_ssn_lc_sites$NHDPlusID)) |> 
+  select(
+    strm, NHDPlusID, 
+    dasqkm_tot, elev_min, slope
+  ) |> 
+  # GGally::ggpairs(
+  #   mapping = aes(color = strm, alpha = 0.8),
+  #   columns = c(3:5),
+  #   upper = list(continuous = GGally::wrap("cor", method = "spearman", digits = 2))
+  #   ) +
+  # scale_color_manual(values = as.vector(pal_strm[5:7]), aesthetics = c("color","fill"))
+  split(~strm) |> 
+  map(
+    ~.x |> 
+      corrr::correlate(method = "spearman", use = "complete.obs") |> 
+      #corrr::rearrange() |> 
+      corrr::shave() |> 
+      mutate(strm = .x$strm[1])
+  )
+
+
+ssn_lc_sites_cor <- as_tibble(sf_ssn_lc_sites) |> 
+  select(
+    strm, site, NHDPlusID, 
+    ends_with("_med"),
+    lwd100_cv = lwd100_years_cv,
+    length_km:VEMA,
+    #following initial EDA
+    -dasqkm_cat, -length_km, -elev_max, -VEMA, -QEMA
+  ) |> 
+  
+# #nice supp plot...?
+#   GGally::ggpairs(
+#     mapping = aes(color = strm, alpha = 0.8), 
+#     columns = c(9:11,4), 
+#     upper = list(continuous = GGally::wrap("cor", method = "spearman", digits = 2))
+#     ) + 
+#   scale_color_manual(values = as.vector(pal_strm[5:7]), aesthetics = c("color","fill"))
+
+  # pivot_longer(-c(strm, site, NHDPlusID)) |> 
+  # filter(str_detect(name, "dasqkm|elev|slope|bnk")) |> 
+  # # ggplot() +
+  # # geom_boxplot(aes(value, strm, color = strm), varwidth = T) + facet_wrap(~name, scales = "free")
+  # # geom_qq_line(aes(sample = value, color = strm)) + geom_qq(aes(sample = value, color = strm)) + facet_wrap(~name, scales = "free")
+  # summarise(
+  #   across(
+  #     value,
+  #     list(
+  #       shap = ~shapiro.test(.)$p.value,
+  #       skew = ~e1071::skewness(.)
+  #     )), .by = c(strm, name))
+
+  split(~strm) |> 
+  map(
+    ~.x |> 
+      corrr::correlate(method = "spearman", use = "complete.obs") |> 
+      #corrr::rearrange() |> 
+      corrr::shave() |> 
+      mutate(strm = .x$strm[1])
+  )
+
+# #everything, used in initial screening
+# ssn_lc_sites_cor |>
+#   map(~.x |>
+#         select(-strm) |>
+#         corrr::rplot(print_cor = T) +
+#         scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+#         wacolors::scale_color_wa_c("vantage", limits = c(-1,1), reverse = T) +
+#         labs(subtitle = .x$strm[1])
+#   ) |>
+#   wrap_plots(guides = "collect")
+
+```
+
+```{r gt_ssn_lc_sites_cor_indep}
+#| label: tbl-lc_cor_indep
+
+# ssn_lc_sites_cor |> 
+#   map(
+#     ~.x |> 
+#       # select(term, dasqkm_tot, elev_min, slope, bnkwdth_p50_med) |> 
+#       # corrr::stretch() |> drop_na(r) |> filter(str_detect(y, "dasqkm|elev|slope|bnkwdth"))
+#       select(strm, term, 
+#              `Bankfull width` = bnkwdth_p50_med,
+#              `Drainage area` = dasqkm_tot,
+#              Elevation = elev_min
+#       ) |> 
+#       filter(str_detect(term, "dasqkm|elev|slope"))
+#   ) |> 
+#   bind_rows() |> 
+#   mutate(
+#         term = case_when(
+#           term == "bnkwdth_p50_med" ~ "Bankfull width",
+#           term == "dasqkm_tot" ~ "Drainage area",
+#           term == "elev_min" ~ "Elevation",
+#           term == "slope" ~ "Slope"
+#         )
+#       ) |> 
+#   gt(
+#     groupname_col = "strm", 
+#     rowname_col = "term",
+#     caption = gt::md("Among-site Spearman correlations  \n physiographic predictors")
+#   ) |> 
+#   fmt_number() |> 
+#   sub_missing() |> 
+#   tab_spanner("IMW measured", columns = "Bankfull width") |> 
+#   tab_spanner("NHDplus HR", columns = c("Drainage area", "Elevation")) |> 
+#   tab_style_body(
+#     style = cell_text(color = "red", style = "italic"),
+#     fn = function(x) x < 0
+#   ) |> 
+#   tab_style_body(
+#     style = cell_text(weight = "bold"),
+#     columns = where(is.numeric),
+#     fn = function(x) abs(x) >= 0.5
+#   )
+
+full_join(
+  ssn_lc_edges_cor |> 
+    map(
+      ~.x |> 
+        select(term, dasqkm_tot, elev_min, slope) |> 
+        corrr::stretch(na.rm = T, remove.dups = T) |> 
+        mutate(strm = .x$strm[1])
+    ) |> 
+    bind_rows() |> rename(r_edges = r) 
+  ,
+  ssn_lc_sites_cor |> 
+    map(
+      ~.x |> 
+        select(term, dasqkm_tot, elev_min, slope, bnkwdth_p50_med) |> 
+        corrr::stretch(na.rm = T, remove.dups = T) |> 
+        filter(str_detect(y, "dasqkm|elev|slope|bnkwdth")) |> 
+        mutate(strm = .x$strm[1])
+    ) |> 
+    bind_rows() |> rename(r_sites = r) 
+  ,
+  by = c("strm", "x", "y")
+) |> 
+  select(strm, x, y, r_edges, r_sites) |> 
+  arrange(strm) |> 
+  mutate(
+    across(
+      c(x,y),
+      ~case_when(
+          . == "bnkwdth_p50_med" ~ "Bankfull width",
+          . == "dasqkm_tot" ~ "Drainage area",
+          . == "elev_min" ~ "Elevation",
+          . == "slope" ~ "Slope"
+        )
+      )
+    ) |>
+  unite(col = "measures", x, y, sep = " ~ ") |> 
+  gt(
+    groupname_col = "strm", 
+    rowname_col = "measures",
+    caption = gt::md("Among-reach Spearman correlations of physiographic measures")
+  ) |> 
+  #cols_label_with(fn = ~str_replace(., "r_", "Spearman's r ")) |> 
+  cols_label(
+    "r_edges" = "NHDplus reaches, no sampling",
+    "r_sites" = "Reaches with IMW sampling"
+    ) |> 
+  fmt_number(columns = starts_with("r_"), decimals = 2) |> 
+  sub_missing() |> 
+  tab_style_body(
+    style = cell_text(color = "red", style = "italic"),
+    fn = function(x) x < 0
+  ) |> 
+  tab_style_body(
+    style = cell_text(weight = "bold"),
+    columns = where(is.numeric),
+    fn = function(x) abs(x) >= 0.5
+  ) |> 
+  tab_style(
+    style = cell_fill(color = "grey90"),
+    locations = list(
+      cells_stub(rows = str_detect(measures, "Bank")),
+      cells_body(rows = str_detect(measures, "Bank"))
+    )
+  )
+
+```
+
+
+## push model fitting from 'finished' gpkgs
+
+```{r rebuild_ssn_list}
+#https://usepa.github.io/SSN2/articles/introduction.html#background
+library(SSN2)
+
+dir_ssn <- grep(".ssn$", list.dirs("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/ssn_data"), value = T)
+dir_ssn <- set_names(dir_ssn, str_remove(basename(dir_ssn), ".ssn"))
+
+ssn <- map(dir_ssn,
+  function(path_ssn) {
+    ## if rebuilding or if strm.ssn/distance needs overwrite
+    # ssn <- SSN2::ssn_import(
+    #   path = path_ssn, 
+    #   include_obs = TRUE, 
+    #   predpts = c("preds"), 
+    #   overwrite = TRUE
+    #   )
+    # SSN2::ssn_create_distmat(
+    #   ssn,
+    #   predpts = "preds", 
+    #   among_predpts = TRUE,
+    #   overwrite = TRUE
+    #   )
+    ## otherwise to avoid overwriting OR 'netgeom column is present in sf_data and overwrite = FALSE' error
+    ## rewrite last lines of SSN2::ssn_import to skip rerun of SSN2::create_netgeom and SSN2:::createBinaryID 
+    ## to avoid overwriting `netgeom` col and binaryID.db
+    ssn <- list(
+      edges = st_read(file.path(path_ssn, "edges.gpkg")),
+      obs = st_read(file.path(path_ssn, "sites.gpkg")),
+      preds = list(preds = st_read(file.path(path_ssn, "preds.gpkg"))),
+      path = path_ssn
+    )
+    class(ssn) <- "SSN"
+
+    return(ssn)
+  }
+)
+```
+
+```{r fit_ssn_glm_wrapper}
+fit_ssn_glm <- function(ssn_strm, lhs = "lwd100_years_cv", rhs = "dasqkm_tot + elev_min + slope"){
+  ssn_glm(
+    formula = as.formula(paste(lhs, "~", rhs)),
+    ssn.object = ssn_strm,
+    family = "Gamma", 
+    tailup_type = "exponential",
+    taildown_type = "none",
+    euclid_type = "gaussian",
+    additive = "afvArea"
+  ) 
+} 
+
+```
+
+### drop/revise: iterate all model formulas
+
+*this was worth doing but needs dropping or revising to RMSPE only* given this from vignette: "The estimation method is specified via the estmethod argument, which has a default value of "reml" for restricted maximum likelihood (REML). The other estimation method is "ml" for maximum likelihood (ML). REML is chosen as the default because it tends to yield more accurate covariance parameter estimates than ML, especially for small sample sizes. One nuance of REML, however, is that comparisons of likelihood-based statistics like AIC are only valid when the models have the same fixed effects structure (i.e., the same formula). To compare fixed effects and covariance structures simultaneously, use ML or a model comparison tool that is not likelihood-based, such as cross validation via loocv(), which we discuss later."
+
+iterate fits and diagnostics, map (all) alternative model formulas per single stream
+```{r mod_forms}
+yvars <- c("lwd100_med", "lwd100_years_cv") 
+xvars <- c("dasqkm_tot", "elev_min", "slope", "bnkwdth_p50_med")
+
+mod_forms <- expand_grid(
+  lhs = yvars
+  ,
+  rhs = unlist(map(
+    1:length(xvars),
+    ~combn(xvars, .x, simplify = T) |> 
+      apply(2, paste, collapse = " + ")
+  ))
+  ) |> 
+  mutate(
+    f = paste(lhs, rhs, sep = " ~ ")
+    #,f = map(f, as.formula)
+  ) |> 
+  pull(f)
+```
+
+```{r INITIALgt_glm_ssn_lwd_fit}
+#this is not instant but also not terrible considering
+ssn_lwd_mill <- map(
+  mod_forms,
+  \(f){
+    fit <- ssn_glm(
+      formula = as.formula(f),
+      ssn.object = ssn$Mill,
+      family = "Gamma",
+      tailup_type = "exponential",
+      taildown_type = "none",
+      euclid_type = "gaussian",
+      additive = "afvArea"
+    )
+    #for now do not care about full object
+    return(list(
+      fit_formula = format(fit$formula),
+      fit_measures = broom::glance(fit),
+      fit_coefs = broom::tidy(fit)
+    ))
+  }
+)
+
+ssn_lwd_mill |> 
+  map(
+    ~.x$fit_measures |> 
+      mutate(
+        f = format(.x$fit_formula),
+        lhs = str_split_1(f, " ~ ")[1]
+        )
+    ) |> 
+  bind_rows() |> 
+  #arrange(desc(pseudo.r.squared)) |> 
+  arrange(AICc) |> 
+  select(lhs, f, psdo_r2 = pseudo.r.squared, AICc, logLik
+         #, dev = deviance
+         ) |> 
+  split(~lhs) |> 
+  map(
+    ~.x |> 
+      gt(groupname_col = "lhs", rowname_col = "f") |> 
+      fmt_number(decimals = 3) |> 
+      data_color(columns = "psdo_r2", direction = "column", method = "quantile", palette = "Purples", reverse = F) |> 
+      data_color(columns = "AICc", direction = "column", method = "quantile", palette = "Oranges", reverse = T) |> 
+      data_color(columns = "logLik", direction = "column", method = "quantile", palette = "Blues", reverse = F)
+  )
+
+```
+
+```{r ssn_lwd_med_mod_forms}
+#expect a couple of minutes
+ssn_lwd_med <- expand_grid(
+  strm = names(ssn),
+  form = grep("lwd100_med", mod_forms, value = T)
+  ) |> 
+  mutate(
+    ssn_glm = map2(
+      strm, form,
+      \(s,f){
+        fit <- fit_ssn_glm(ssn_strm = ssn[[s]], frm = f)
+        return(list(
+              #fit_formula = format(fit$formula),
+              fit_measures = broom::glance(fit),
+              fit_loo = SSN2::loocv(fit),
+              fit_coefs = broom::tidy(fit)
+            ))
+      }
+  )
+)
+
+ssn_lwd_med <- ssn_lwd_med |> 
+  unnest_wider(ssn_glm, simplify = F) |>
+  unnest_wider(c(fit_measures, fit_loo))
+
+```
+
+*text to revise, dropping AICc if keeping anything*
+
+Models of the long term 'characteristic' large wood density, measured as the median across years, were better fit for Mill Creek. The largest leave-one-out cross-validation root mean square prediction error (RMSPE) in Mill (2.19) was still smaller than the smallest in Abernathy (2.87) and Germany (3.01). A slope-only model had the lowest AICc value in all three streams, and slope was included with drainage area or bankfull width or both in the other models with lower AICc for all streams. However, in Mill Creek, the two models with the smallest LOO prediction error did not include slope as a predictor, and the coefficient estimate for slope was rarely statistically signficant (at 0.05). In contrast, drainage area and (positively correlated) bankfull width had highly significant estimates in many model formulations for Mill and Abernathy Creeks. No physiographic predictor was even weakly significant (at 0.1) in any model for Germany Creek.
+
+```{r gt_glm_ssn_lwd_med}
+ssn_lwd_med |> 
+  select(
+    strm, form, AICc, 
+    #psdo_r2 = pseudo.r.squared,
+    RMSPE
+    ) |> 
+  #arrange(strm, AICc) |> 
+  pivot_wider(names_from = strm, values_from = where(is.numeric)) |> 
+  select(form, contains("Mill"), contains("Abernathy"), contains("Germany")) |>
+  arrange(AICc_Mill) |> 
+  #mutate(across(where(is.numeric), list(rnk = ~rank(.)))) |> select(form, contains("rnk"), -contains("RMSPE"))
+  #mutate(across(where(is.numeric), list(rnk = ~rank(.)))) |> select(form, contains("rnk"), -contains("AICc"))
+  
+  gt(
+    #groupname_col = "strm", 
+    rowname_col = "form"
+  ) |> 
+  tab_header(
+    title = "Model diagnostics of SSN GLM Gamma regression of characteristic large wood density",
+    subtitle = "Exponential tail-up and Gaussian Euclidean covariance"
+  ) |> 
+  # tab_spanner("Mill", columns = contains("Mill")) |> 
+  # tab_spanner("Abernathy", columns = contains("Abernathy")) |> 
+  # tab_spanner("Germany", columns = contains("Germany")) |> 
+  # cols_label_with(fn = ~str_remove(., "Mill|Abernathy|Germany")) |> 
+  tab_spanner("AICc", columns = contains("AICc")) |> 
+  tab_spanner("LOO RMSPE", columns = contains("RMSPE")) |> 
+  cols_label_with(fn = ~str_remove(., "AICc_|RMSPE_")) |> 
+  fmt_number(starts_with("AIC"), decimals = 1) |> 
+  #fmt_number(contains("psdo_r2"), decimals = 2) |> 
+  fmt_number(starts_with("RMSPE"), decimals = 2) |> 
+  data_color(columns = starts_with("AIC"), method = "numeric", palette = "Oranges", reverse = T) |> 
+  data_color(columns = starts_with("psdo_r2"), method = "numeric", palette = "Purples", reverse = F) |> 
+  data_color(columns = starts_with("RMSPE"), method = "numeric", palette = "Blues", reverse = T) 
+ 
+  # data_color(columns = "RMSPE_Mill", direction = "column", method = "numeric", palette = "Blues", reverse = T) |> 
+  # data_color(columns = "RMSPE_Abernathy", direction = "column", method = "numeric", palette = "Blues", reverse = T) |> 
+  # data_color(columns = "RMSPE_Germany", direction = "column", method = "numeric", palette = "Blues", reverse = T)
+
+```
+
+```{r coef_signif}
+ssn_lwd_med |> 
+  group_by(strm) |> 
+  slice_min(AICc, n = 1) |> 
+  unnest(fit_coefs) |> filter(term == "slope")
+
+ssn_lwd_med |> 
+  unnest(fit_coefs) |> 
+  select(strm, form, AICc, RMSPE, term, estimate, p.value) |> 
+  filter(
+    term != "(Intercept)",
+    p.value <= 0.1
+    ) |> 
+  arrange(form, p.value) |> 
+  #print(n=Inf)
+  split(~strm)
+  
+
+```
+
+### full models per basin
+
+prelim takeaway - Mill best of poor fits, DA in Mill only signif covar, substantantial prop var in all 3 in nugget, resid and qq plots esp for Abe and Germ suggest nonlinearity 
+
+would/could fit a model for bankfull on DA and elev and slope then refit LWD on estimated bankfull...
+
+should do CV (AND mean diff?!?) but also could move to RF or GAM or better nonlin structure
+
+o	Finish lwd100_years_cv prelim SSN gamma
+o	SSNbler for Straits
+o	SSN2 for Straits
+o	RF other nonlin engines using SSN covars
+
+```{r fit_glm_ssn_lwd_med}
+#in order to fit poisson or negbinom need to rebuild all the way back to `sf_sites_lc <- site_meta_sf`
+#resummarizing from site_year$tot_lwd_cnt
+
+ssn_lwd_med <- map(
+  ssn, ~fit_ssn_glm(.x, lhs = "lwd100_med", rhs = "dasqkm_tot + elev_min + slope")
+  )
+
+map(ssn_lwd_med, summary)
+# map(ssn_lwd_med, ~.x$pseudoR2) 
+# map(ssn_lwd_med, ~.x$coefficients$fixed)
+map(ssn_lwd_med, ~broom::glance(.x) |> mutate(strm = .x$ssn.object$obs$strm[1])) |> bind_rows() |> select(strm, AICc, pseudo.r.squared)
+
+#this seems like something to discuss...
+#nugget is largest for all 3, Mill and Abe with appreciable euclid, Mill with the 
+map(ssn_lwd_med, ~varcomp(.x) |> mutate(strm = .x$ssn.object$obs$strm[1])) |> list_rbind() |> pivot_wider(names_from = varcomp, values_from = proportion)
+
+#original untransform (logged) mean values by stream
+map(ssn, ~as.data.frame.list(round(summary(.x$obs$lwd100_med), 3)) |> 
+      mutate(
+        logmu = log(Mean),
+        strm = .x$obs$strm[1]
+        )) |> bind_rows() 
+
+#is RMSPE is in backtransformed (exp) units?
+#can examine function to be sure
+ssn_lwd_med_loo <- map(ssn_lwd_med,  ~SSN2::loocv(.x))
+bind_rows(ssn_lwd_med_loo)
+
+
+#all confint span 0 except DA in Mill, matching nonsignif
+#note "parameters are estimated on the relevant link scale and should be interpreted accordingly"
+#so, for example in Mill, 'dasqkm_tot: -0.0188' is the decrease in log average lwd100_med per unit increase in log DA 
+#or...the decrease in log average lwd100_med per unit increase in non-log DA 
+#so would like to confirm that exp(-0.0188) = 0.981 fewer LWD/100 per each sqkm (just less than 1 fewer piece per additional sqkm?)
+map(ssn_lwd_med, ~broom::tidy(.x, conf.int = T) |> mutate(exp_est = exp(estimate)))
+#negative rel'n but not linear
+ssn_lwd_med$Mill$ssn.object$obs |> ggplot(aes(dasqkm_tot, lwd100_med)) + geom_point() + geom_smooth(se = F)
+ssn_lwd_med$Mill$ssn.object$obs |> ggplot(aes(log10(dasqkm_tot), lwd100_med)) + geom_point() + geom_smooth(se = F)
+
+#these do not look good for linear, homoscedastic...
+map(ssn, ~.x$obs)
+map(ssn_lwd_med, ~tibble(
+  #orig = .x$ssn.object$obs$lwd100_med, #same as "obs", just checking
+  obs = .x$y, est = .x$fitted$response, res = .x$residuals$response
+  ) |> arrange(est))
+map(ssn_lwd_med, ~plot(.x, which = 1))
+
+#Q-Q 
+map(ssn_lwd_med, ~plot(.x, which = 2))
+#Cooks dist
+map(ssn_lwd_med, ~plot(.x, which = 4))
+
+
+```
+
+REDO
+maybe these are not especially interesting woodscapes...? but also maybe estimate lwd100_med network-wide then have as pred covar for lwd100_years_cv?
+```{r glm_woodscape}
+ssn_lwd_med_mill <- fit_ssn_glm(ssn_strm = ssn$Mill, frm = "lwd100_med ~ dasqkm_tot + slope")
+#ssn_lwd_med_mill <- fit_ssn_glm(ssn_strm = ssn$Abernathy, frm = "lwd100_med ~ dasqkm_tot + slope")
+summary(ssn_lwd_med_mill) #slope not signif, intercept strongly, DA neg est and highly signif (less wood moving downstream)
+
+# SSN2:::predict.ssn_glm(ssn_lwd_med_mill) #pred pts length numeric vector
+# SSN2:::predict.ssn_glm(ssn_lwd_med_mill, newdata = "preds") #same
+
+# SSN2:::augment.ssn_glm(ssn_lwd_med_mill) #fitted as sf points
+# #sf pred pts with .fitted column added
+ssn_lwd_med_mill_pred <- SSN2:::augment.ssn_glm(ssn_lwd_med_mill, newdata = "preds", type = "response")
+ssn$Mill$obs$lwd100_med |> summary()
+SSN2:::augment.ssn_glm(ssn_lwd_med_mill) |> 
+  as_tibble() |> 
+  ggplot() + geom_abline(slope = 1) + 
+  geom_point(aes(lwd100_med, .fitted, size = dasqkm_tot, color = slope))
+
+ssn_lwd_med_mill_pred$.fitted |> summary() 
+ssn_lwd_med_mill_pred |> 
+  as_tibble() |> 
+  ggplot() + 
+  geom_col(aes(x = fct_reorder(NHDPlusID, .fitted, identity), y = .fitted, color = slope))
+
+ggplot() +
+  geom_sf(data = ssn$Mill$edges, aes(linewidth = dasqkm_tot), alpha = 0.4, color = "lightblue") +
+  geom_sf(
+    data = inner_join(
+      ssn$Mill$edges,
+      as_tibble(ssn_lwd_med_mill_pred) |> select(rid, .fitted) 
+      , by = "rid") |> 
+      filter(.fitted < quantile(.fitted, p = 0.95))
+    , 
+    aes(color = .fitted, linewidth = dasqkm_tot)
+    #aes(color = cut(.fitted, c(0,1,3,5,10)), linewidth = dasqkm_tot)
+  ) +
+  wacolors::scale_color_wa_c("footbridge", reverse = T) +
+  geom_sf(data = ssn$Mill$obs, 
+          aes(
+            #color = cut(lwd100_med, c(0,1,3,5,10))
+            color = lwd100_med
+            ), size = 4)
+
+
+ssn_lwd_med_mill_pred |>
+  mutate(.fitted = cut(.fitted, seq(0,50, by = 10))) |> 
+  mapview::mapview(zcol = ".fitted", burst = T)
+
+
+ssn_lwd_cv_mill <- fit_ssn_glm(ssn_strm = ssn$Mill, frm = "lwd100_years_cv ~ dasqkm_tot + slope")
+ssn_lwd_cv_aber <- fit_ssn_glm(ssn_strm = ssn$Abernathy, frm = "lwd100_years_cv ~ dasqkm_tot + slope")
+
+summary(ssn_lwd_cv_mill) #not necessarily terrible, DA weakly signif, slope below 0.1
+ssn_lwd_cv_mill$fitted$response |> summary()
+SSN2:::augment.ssn_glm(ssn_lwd_cv_mill, type = "response") |> 
+  as_tibble() |> 
+  ggplot() + geom_abline(slope = 1) + 
+  geom_point(aes(lwd100_years_cv, .fitted, size = dasqkm_tot, color = slope))
+
+summary(ssn_lwd_cv_aber) #much worse r2 etc., basically nothing
+#so why are fitted so close to obs?
+ssn_lwd_cv_aber$fitted$response |> summary()
+ssn_lwd_cv_aber$y |> summary()
+SSN2:::augment.ssn_glm(ssn_lwd_cv_aber, type = "response") |> 
+  as_tibble() |> 
+  ggplot() + geom_abline(slope = 1) + 
+  geom_point(aes(lwd100_years_cv, .fitted, size = dasqkm_tot, color = slope))
+
+ssn_lwd_cv_mill$residuals$response |> summary()
+ssn_lwd_cv_aber$residuals$response |> summary()
+
+ssn_lwd_cv_mill_pred <- ssn_lwd_cv_mill |> SSN2:::augment.ssn_glm(newdata = "preds", type = "response")
+ssn_lwd_cv_mill_pred$.fitted |> summary() 
+
+ggplot() +
+  geom_sf(data = ssn$Mill$edges, aes(linewidth = dasqkm_tot), alpha = 0.4, color = "lightblue") +
+  geom_sf(
+    data = inner_join(
+      ssn$Mill$edges,
+      as_tibble(ssn_lwd_cv_mill_pred) |> select(rid, .fitted) 
+      , by = "rid")
+    , 
+    aes(color = .fitted, linewidth = dasqkm_tot)
+  ) +
+  wacolors::scale_color_wa_c("forest_fire", reverse = T) +
+  geom_sf(data = ssn$Mill$obs, aes(color = lwd100_years_cv), size = 4)
+#spatial estimates reflect a pretty clear neg relationship in obs
+ggplot(ssn$Mill$obs) + geom_point(aes(lwd100_med, lwd100_years_cv, size = dasqkm_tot, color = slope))
+#which is much more complicated in Abernathy
+ggplot(ssn$Abernathy$obs) + geom_point(aes(lwd100_med, lwd100_years_cv, size = dasqkm_tot, color = slope))
+
+ssn_lwd_cv_aber_pred <- ssn_lwd_cv_aber |> SSN2:::augment.ssn_glm(newdata = "preds", type = "response")
+ssn_lwd_cv_aber_pred$.fitted |> summary() 
+
+ggplot() +
+  geom_sf(data = ssn$Abernathy$edges, aes(linewidth = dasqkm_tot), alpha = 0.4, color = "lightblue") +
+  geom_sf(
+    data = inner_join(
+      ssn$Abernathy$edges,
+      as_tibble(ssn_lwd_cv_aber_pred) |> select(rid, .fitted) 
+      , by = "rid")
+    , 
+    aes(color = .fitted, linewidth = dasqkm_tot)
+  ) +
+  wacolors::scale_color_wa_c("forest_fire", reverse = T) +
+  geom_sf(data = ssn$Abernathy$obs, aes(color = lwd100_years_cv), size = 4)
+
+#just noticed that snapped startpoints create duplicate pred points
+#not really harmful just worth cleaning
+as_tibble(ssn_lwd_cv_mill_pred) |> count(rid) |> arrange(desc(n)) |> filter(n>1)
+as_tibble(ssn_lwd_cv_aber_pred) |> count(rid) |> arrange(desc(n)) |> filter(n>1)
+as_tibble(ssn$Mill$preds$preds) |> count(rid) |> arrange(desc(n)) |> filter(n>1)
+as_tibble(ssn$Abernathy$preds$preds) |> count(rid) |> arrange(desc(n)) |> filter(n>1)
+```
+
+
+
+would like to compare pooled and distinct stream fits...but have to think about how pooling across streams would even work - seems like requires rebuilding using 'netID' to track the 3 edge sets
+
+also think about residuals and whether larger per-site residuals could represent/detect restoration effects...?
+call with Jeremy H:  negative resid as 'high priority targets'
+
+can also attempt parsnip/tidymodels approach, but not sure if set_engine will work without some extra plumbing?
+
+what about using SSNbler-prepped attributes but sending into RF-type prediction engine? so using AFV or other topology and/or just bare NHDplusHR but for cleaned networks
+
+```{r parsnipping}
+#https://parsnip.tidymodels.org/articles/Examples.html
+
+library(tidymodels)
+
+d_obs <- as_tibble(ssn$Mill$obs) |> 
+  mutate(
+    lon = st_coordinates(geom)[,1],
+    lat = st_coordinates(geom)[,2]
+  ) |> 
+  select(lwd100_med, lon, lat, dasqkm_tot, elev_min, slope, upDist, afvArea)
+
+d_edges <- ssn$Mill$edges |> 
+  mutate(
+    pt_start = lwgeom::st_startpoint(geom),
+    lon = st_coordinates(pt_start)[,1],
+    lat = st_coordinates(pt_start)[,2]
+  )
+
+rand_forest(
+  mode = "regression", #try censored?
+  engine = "ranger",
+  trees = 200, min_n = 1
+) |> 
+  fit(
+    formula = lwd100_med ~ ., 
+    data = d_obs
+  ) |> str()
+  predict(d_obs) |> cbind(d_obs$lwd100_med)
+
+```
+
+
+## scraps
+
+```{r d_hi_cv_niceplottoworkupmore}
+#use residuals rather than abs thresholds?
+d_hi_cv <- d |> 
+      #filter(lwd100_med > 15 | lwd100_years_cv > 1)
+      filter( lwd100_years_cv > 1)
+
+ 
+d |> 
+  ggplot(aes(lwd100_med, lwd100_years_cv, color = strm)) +
+  geom_hline(yintercept = c(0.75,1), linewidth = 0.5, alpha = 0.4, linetype = 2) +
+  geom_vline(xintercept = 10, linetype = 3) +
+  geom_point(alpha = 0.5, show.legend = F) +
+  geom_smooth(method = "lm", se = F, show.legend = F) +
+  geom_text(
+    data = as_tibble(d_hi_cv),
+    aes(label = site), hjust = "inward", size = 2, show.legend = F
+  ) +
+  #geom_smooth(method = "lm")
+  scale_color_manual(values = pal_strm) + 
+  #facet_wrap(~cmplx_strm)
+  facet_wrap(~strm_type + cmplx_strm, ncol = 2)
+
+
+d |> 
+  semi_join(as_tibble(d_hi_cv), by = "site") |> 
+  split(~cmplx_desc) |> 
+  map(
+    ~ggplot(.x) +
+      geom_sf(
+        data = sf_nhdphr |>
+          filter(cmplx_desc == .x$cmplx_desc[1]) |>
+          mutate(slope_f = cut(slope,  breaks = c(0, 0.05, 0.1, 0.25, 1.5)))
+        ,
+        aes(linewidth = dasqkm, color = slope_f), alpha = 0.4
+      ) +
+      scale_color_manual(values = c("lightblue","darkblue","tan","orange")) +
+      scale_linewidth(limits = c(0,80), range = c(0.5,3)) +
+      
+      geom_sf(
+        # aes(size = lwd100_med, shape = lwd100_years_cv_f), 
+        # color = if_else(.x$lwd100_years_cv_f, "tomato","grey30")
+        size = 2, color =  "tomato"
+        #, alpha = 0.5
+      ) +
+      geom_sf_text(
+        aes(label = site), size = 2.5,
+        color =  "tomato", vjust = "bottom", nudge_y = 1000
+        #, alpha = 0.5
+      ) +
+      scale_size_area(limits = c(0, 20), breaks = c(0,1,5,10,20)) +
+      ggspatial::annotation_scale() +
+      labs(x = NULL, y = NULL, subtitle = .x$cmplx_desc[1])
+  ) |> 
+  wrap_plots(ncol = 1, guides = "collect") -
+  { 
+    site_year |> 
+      semi_join(d_hi_cv, by = "site") |> 
+      ggplot(aes(year, lwd100, group = site, color = cmplx_strm)) +
+      geom_point() + geom_line(linetype = 3) +
+      scale_color_manual(values = pal_cmplx_strm) +
+      #facet_wrap(~strm, scales = "free_y")
+      facet_wrap(~cmplx_strm+site, scales = "free_y", ncol = 2) +
+      labs(
+        title = "Large wood density in time at sites with CV > 1", 
+        subtitle = "Density is count/100m; note varied y-axis scales")
+  } + 
+  plot_layout(ncol = 2)
+
+
+site_year |> filter(site == "STA057") |> pull(lwd100) |> Kendall::MannKendall() |> summary()
+site_year |> filter(site == "ABR072") |> pull(lwd100) |> Kendall::MannKendall() |> summary()
+
+y = site_year |> filter(site == "ABR072") |> pull(lwd100)
+x = site_year |> filter(site == "ABR072") |> pull(year)
+broom::tidy(lm(y ~ x))
+summary(lm(y ~ x))$coefficients
+site_year |> filter(site == "ABR072") |> 
+  summarise(
+    lwd100_lm = summary(lm(lwd100 ~ year))$coefficients["year",4]
+    ,.by = site
+  )
+
+#CV high var not at all necessarily linked with 
+#MK monotonic trend
+#nor OLS linear time-reg on year
+#this is maybe not usable as-is but also maybe interesting/helpful?
+#some notes:
+#only 6 of 42 MK pval < 0.1 with lm pval > 0.1 ---> signif monoton but nonsignif tvar reg
+#tho 16 of 52 lm signif <0.1 have MK pval > 0.1 --> higher proport signif tvar reg that are not monoton
+#but generally signif tvar slope est look corr with MK tau
+#also
+#few signif neg lm slopes in LC, especially relative to HC
+#most signif pos lm in Abe, with some in Germ;
+site_year |> 
+#  semi_join(d_hi_cv, by = "site") |> 
+  summarise(
+    across(
+      c(lwd100), #pct_pools, pct_gravel,
+      list(
+        q50 = ~median(., na.rm = T),
+        cv = ~sd(., na.rm = T) / mean(., na.rm = T),
+        mk_tau = ~as.vector(Kendall::MannKendall(.)$tau),
+        mk_p = ~as.vector(Kendall::MannKendall(.)$sl)
+      )
+    )
+    ,
+    lwd100_lm_est = summary(lm(lwd100 ~ year))$coefficients["year",1],
+    lwd100_lm_pval = summary(lm(lwd100 ~ year))$coefficients["year",4],
+    ,
+    .by = c(cmplx_strm, site)
+  ) |> 
+  #filter(lwd100_mk_p < 0.1) #how many at least weakly monotonic: 42
+  #filter(lwd100_mk_p < 0.1, lwd100_lm_pval > 0.1) #how many of those NOT signif slope: 6
+  #filter(lwd100_lm_pval < 0.1) #how many at least weakly tvar signif: 52
+  filter(lwd100_lm_pval < 0.1, lwd100_mk_p > 0.1) #how many of those NOT monoton signif: 16
+  
+  #ggplot(aes(lwd100_cv, lwd100_mk, size = lwd100_q50, color = cmplx_strm)) +
+  #ggplot(aes(lwd100_lm_est, lwd100_mk_tau, size = lwd100_q50, color = cmplx_strm)) +
+  ggplot(aes(lwd100_lm_est, lwd100_mk_tau, size = lwd100_q50, color = cmplx_strm, alpha = lwd100_lm_pval)) +
+  geom_point() +
+  scale_color_manual(values = pal_cmplx_strm) +
+  scale_y_continuous(limits = c(-1,1)) +
+  scale_alpha_binned(breaks = c(0,0.05,0.1,1), range = c(0.8, 0.1)) +
+  #facet_wrap(~(lwd100_lm_pval < 0.1))
+  facet_wrap(~cmplx_strm + (lwd100_lm_pval < 0.1), ncol = 2)
+
+```
+
+
+
+# Intro 
+
+Alongside flow and sediment, wood is fundamental to stream habitat dynamics (MANY CITES). The 'natural wood regime' articulated by Wohl et al. (2019) describes recruitment, transport, and storage processes, each with the potential to vary in magnitude, duration, frequency, timing, and rate of change. This conceptual model has emerged from extensive research into the complex interactions among water, rocks, and trees in the riverscape, and this large body of research has also addressed and encouraged efforts to reintroduce logs and 'coarse woody debris' into many systems, typically to increase hydraulic and habitat complexity and thereby benefit aquatic organisms. But despite recognition that wood is both important and spatiotemporally variable, few studies have described the dynamics of instream wood throughout the drainage networks of multiple streams over more than a decade. Here we quantify and describe patterns of interannual variation in large wood between 2007 and 2023 *[24?]* at hundreds of consistently surveyed reaches within 7 *[10?]* small independent basins in western Washington, USA. 
+
+These data were collected as part of the Intensively Monitored Watersheds (IMW) program, a long-term, multi-location, collaborative evaluation of the population-level effects of habitat rehabilitation practices targeting Pacific salmon recovery (Bilby et al. 2005; Bennett et al. 2016). Physical and biological data are collected throughout several neighboring stream networks within each of the IMW 'complexes', enabling watershed-scale comparisons of the factors that may affect and limit salmonids in freshwater (Roni 2005; Bilby et al. 2023). Current best practice in stream rehabilitation seeks to identify 'limiting factors' and tailor 'process-based' interventions to ameliorate them. The IMW stream habitat observations extend and enrich our knowledge of how such processes presently operate in small, forested basins of the Pacific Northwest.
+
+This paper examines spatial variation in the temporal variation in large wood density, asking how measures of change in time relate to network position and topographic attributes. 
+
+
+  - Bilby & Ward 1991
+  - Collins et al. 2002
+  - Hassan et al. 2005
+  - Fox & Bolton 2007
+  - Lininger & Hilton 2022
+    - redwood long term
+  - Martens & Devine 2022
+    - single visit from 74 site/reaches western Olympics, focus on pool formation relative to wood piece size
+
+  - Wohl et al 2019
+    - Table 1 is nice summary of concepts & assumptions: recruitment/transport/storage relative to mag/freq/dur/timing/roc; other main aspect is the description of 'process-domains'
+    - "However, until more data are available to accurately parameterize mechanistic, multiscale models of
+wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes over broad spatial scales will remain difficult"
+    - Re: managing for target wood regimes: "documented effects of wood mobility suggest the importance of managing for dynamic rather than static wood loads within river corridors. Managing for wood dynamics is challenging because it requires identifying and managing for processes of wood recruitment and transport, which commonly involve wider and longer portions of a river network than the limited channel segments that are typically the focus of management (e.g., Boyer et al. 2003)."
+  
+
+
+# Methods
+
+## Data collection
+
+## Analysis
+
+- Reduced to sites with complete or nearly complete series (BIB drops above Symington?)
+- George: what about redoing counts/densities better stratified by piece length and diameter
+
+- ACF, AR1 as well as or instead of CV?
+- KPSS
+- corrr::correlate(method = "kendall") |> corrr::shave() |> corrr::rplot(print_cor = T) + scale_x_discrete(guide = guide_axis(n.dodge = 2))
+
+
+
+
+# Results
+
+- by response measure?
+
+
+# Discussion
+
+# Cited
+
+Peterson E. E., Dumelle, M., Pearse A., Teleki D., and Ver Hoef, J. M. (2024). SSNbler: Assemble SSN objects in R. R package version 0.1.0
