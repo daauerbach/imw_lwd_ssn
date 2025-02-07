@@ -158,20 +158,320 @@ as_tibble(hr_flw_imw) |> count(cmplx_desc, Name)
 # #but going to deal with HC manually during SSNbler anyway
 # #so leaving streams unseparated for now
 # hr_flw_imw |> filter(cmplx_desc == "Hood Canal") |> mapview(zcol = "GNIS_Name")
-# # outlets:
-# site_meta |> filter(cmplx_abrv=="HC") |> distinct(strm) |> 
-#   mutate(NHDPlusID = c("55000800121057","55000800196755","55000800196966","55000800045870"))
-
 
 saveRDS(hr_flw_imw, file = "~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/sf_hr_flw_imw.rds")
 
 ```
 
-## SSNbler LC
+## SSNbler
 
 Sites with at least 10 years of observations were associated to the NHDplus High Resolution flowlines using the `SSNbler` package (Peterson et al. 2024). 
 
 Topological issues in the hydrography (split paths, 3-way convergences, etc.) were manually examined and corrected, and appropriate matching of site points to stream lines was visually confirmed.
+
+### HC
+
+```{r ssnbler_hc_sta, eval=FALSE}
+#first examined trying to do all 4 at once, but 
+#whereas prior LC tests have been 'mostly clean, nearly rooted tree', dropping/fixing relatively few instances,
+#the HC geometry is a relative mess with lots to drop and frontal line segs
+#trying a GIS coarse clip via st_union(st_convex_hull(sites)) was really unsatisfying
+#so using a graph backtrace from known/desired outlets
+# to manually find outlets: mapview(sf_hr_flw)
+
+strm_to_ssn <- "171100180107_Stavis_55000800121057" #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- "55000800121057"
+
+sfn <- sf_hr_flw |> 
+  filter(
+    dasqkm_tot > 0,
+    HUC12 == "171100180107"
+    ) |> 
+  sfnetworks::as_sfnetwork() 
+sfn <- sfn |> 
+  tidygraph::convert(
+    tidygraph::to_local_neighborhood,
+    node = filter(as_tibble(sfn, "edges"), NHDPlusID == outlet_id)$to,
+    mode = "in", 
+    order = tidygraph::with_graph(sfn, tidygraph::graph_order())
+    ,
+    .clean = T
+  )
+
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sf_site_meta |> filter(str_detect(strm, "Stavis"))), zcol = c("slope","strm"))
+
+#first pass reveals issues
+edges <- SSNbler::lines_to_lsn(
+  streams = as_tibble(sfn, "edges") |> select(-from, -to),
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+#zero issues, 1 outlet
+edges <- edges |> 
+  left_join(read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid") |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+nodes <- sf::st_read(file.path(dir_ssn, "nodes.gpkg"))
+#errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) # |> as_tibble()
+
+#but lots of gratuitous pseudonodes
+mapview::mapview(list(
+  flw = edges, nod = nodes,
+  #, err = errors
+  sites = sf_site_meta |> filter(str_detect(strm, "Stavis"))
+  ), zcol = c("dasqkm_tot","nodecat",
+              #,"error"
+              "strm"
+              ))
+# #in this case, most straightforward fix is just drop/truncate sections above any sites
+# edges |> 
+#   #semi_join(as_tibble(nodes) |> filter(nodecat=="Pseudonode", pointid != 24), by = c("tonode" = "pointid")) |> mapview()
+#   anti_join(as_tibble(nodes) |> filter(nodecat=="Pseudonode", pointid != 24), by = c("tonode" = "pointid")) |> mapview()
+
+#now overwrite after drops
+#SSNbler::lines_to_lsn is called again after pipe, 'streams' is first arg
+edges <- edges |> 
+  anti_join(
+    as_tibble(nodes) |> 
+      filter(nodecat=="Pseudonode", pointid != 24),
+    by = c("tonode" = "pointid")) |> 
+  select(-fromnode, -tonode) |> 
+  filter(
+    !(NHDPlusID %in% c(
+      #drop any tiny headwaters with 0 dasqkm_tot
+      edges |> filter(dasqkm_tot == 0) |> pull(NHDPlusID)
+    ))
+  ) |> 
+  SSNbler::lines_to_lsn(
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+
+#snap tol of 100ft is good starting value based on prior work
+# #but have to increase to get 014, 026, 053
+# sf_site_meta |> filter(str_detect(strm, "Stavis")) |> anti_join(as_tibble(obs), by = "site") |> select(site)
+# plot(1:nrow(obs), sort(obs$snapdist))
+
+sites <- sf_site_meta |> filter(str_detect(strm, "Stavis")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+sites$geometry[sites$site == "STA033"] <- st_point(c(1053709 - 200, 835133 + 100))
+
+obs <- SSNbler::sites_to_lsn(
+  sites = sites,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 145,
+  save_local = TRUE, overwrite = TRUE
+)
+#check snaps are good
+#initially STA033 went to 38 but looks like it should have been 39
+mapview::mapview(list(
+  edges = edges, 
+  obs = obs |> select(site, rid),
+  sites = sites
+  ), zcol = c("rid","rid","strm"))
+
+#now do it again to add edge covars now that points are associated to lines
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:slope),
+      by = "rid")
+  ,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 145,
+  save_local = TRUE, overwrite = TRUE
+)
+
+rm(outlet_id, nodes, errors, sfn, sites)
+
+```
+
+```{r ssnbler_hc_sea, eval=FALSE}
+strm_to_ssn <- "171100180107_Seabeck_55000800007261" #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- "55000800007261"
+
+sfn <- sf_hr_flw |> 
+  filter(
+    dasqkm_tot > 0,
+    HUC12 == "171100180107"
+    ) |> 
+  sfnetworks::as_sfnetwork() 
+sfn <- sfn |> 
+  tidygraph::convert(
+    tidygraph::to_local_neighborhood,
+    node = filter(as_tibble(sfn, "edges"), NHDPlusID == outlet_id)$to,
+    mode = "in", 
+    order = tidygraph::with_graph(sfn, tidygraph::graph_order())
+    ,
+    .clean = T
+  )
+
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sf_site_meta |> filter(str_detect(strm, "Seabeck"))), zcol = c("slope","strm"))
+
+#first pass reveals issues
+edges <- SSNbler::lines_to_lsn(
+  streams = as_tibble(sfn, "edges") |> select(-from, -to),
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+# 1 outlet 1 issue
+edges <- edges |> 
+  left_join(read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid") |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+nodes <- sf::st_read(file.path(dir_ssn, "nodes.gpkg"))
+errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) # |> as_tibble()
+
+sites <- sf_site_meta |> filter(str_detect(strm, "Seabeck")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+
+mapview::mapview(list(
+  flw = edges, nod = nodes, err = errors,
+  sites = sites
+  ),
+  zcol = c("dasqkm_tot","nodecat","error", "strm"))
+
+#now overwrite after drops
+edges <- edges |> 
+  select(-fromnode, -tonode) |> 
+  filter(
+    !(NHDPlusID %in% c(
+      #drop the edge with smallest drainage area at complex converg
+      #confirmed manually is best choice trib running alongside "Northwest Dancing Deer Way"
+      edges |> 
+        inner_join(
+          as_tibble(errors) |> filter(error == "Complex Confluence"),
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(tonode, dasqkm_tot) |> 
+        slice_min(dasqkm_tot, by = tonode) |> 
+        pull(NHDPlusID)
+      ,
+      #drop any tiny headwaters with 0 dasqkm_tot
+      edges |> filter(dasqkm_tot == 0) |> pull(NHDPlusID)
+    ))
+  ) |> 
+  SSNbler::lines_to_lsn(
+  lsn_path = dir_ssn,
+  check_topology = TRUE,
+  snap_tolerance = 1,
+  topo_tolerance = 20,
+  overwrite = TRUE
+)
+
+# have to increase snapdist >100 for 032 and 118
+# sort(set_names(obs$snapdist, obs$site))
+# sites |> anti_join(as_tibble(obs), by = "site") |> select(site)
+# dropping SEA064 since on the dropped trib at complex confluence
+# and nudging SEA121
+sites <- sites |> filter(site != "SEA064")
+sites$geometry[sites$site == "SEA121"] <- st_point(c(1058715 - 200, 835456.7))
+
+obs <- SSNbler::sites_to_lsn(
+  sites = sites,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 125,
+  save_local = TRUE, overwrite = TRUE
+)
+#check snaps are good
+mapview::mapview(list(
+  edges = edges, 
+  obs = obs |> select(site, rid),
+  sites = sites
+  ), zcol = c("rid","rid","strm"))
+
+#now do it again to add edge covars now that points are associated to lines
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:slope),
+      by = "rid")
+  ,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 125,
+  save_local = TRUE, overwrite = TRUE
+)
+
+rm(outlet_id, nodes, errors, sfn, sites)
+
+```
+
+
+```{r ssnbler_hc_bbc}
+strm_to_ssn <- "171100180107_BigBeef_55000800196966" #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- "55000800196966"
+
+```
+
+
+```{r ssnbler_hc_and}
+strm_to_ssn <- "171100180107_LAnderson_55000800045870" #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- "55000800045870"
+
+```
+
+### ST
+
+```{r ssnbler_st_deep}
+strm_to_ssn <- "171100210304_Deep_" #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- ""
+```
+
+
+```{r ssnbler_st_wtwn}
+strm_to_ssn <- "171100210303_WTwin_" #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- ""
+```
+
+
+```{r ssnbler_st_etwn}
+strm_to_ssn <- "171100210302_ETwin_" #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- ""
+```
+
+### LC
+
+```{r ssnbler_lc_mill}
+strm_to_ssn <- "170800030605_Mill_"  #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- ""
+
+```
+
+
+```{r ssnbler_lc_aber}
+strm_to_ssn <- "170800030604_Abernathy_" #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- ""
+
+```
+
+
+```{r ssnbler_lc_germ}
+strm_to_ssn <- "170800030603_Germany_" #HUC12, stream, outlet NHDPlusID
+dir_ssn <- file.path("../ssn_data", strm_to_ssn)
+outlet_id <- ""
+
+
+```
+
+### orig LC
 
 ```{r ssnbler_mill, eval=FALSE}
 strm_to_ssn2 <- "Mill"
