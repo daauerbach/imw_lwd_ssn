@@ -169,36 +169,40 @@ Sites with at least 10 years of observations were associated to the NHDplus High
 
 Topological issues in the hydrography (split paths, 3-way convergences, etc.) were manually examined and corrected, and appropriate matching of site points to stream lines was visually confirmed.
 
-### HC
-
-```{r ssnbler_hc_sta, eval=FALSE}
-#first examined trying to do all 4 at once, but 
+```{r func_to_sfn}
+#first examined trying to do all 4 HC streams at once, but 
 #whereas prior LC tests have been 'mostly clean, nearly rooted tree', dropping/fixing relatively few instances,
 #the HC geometry is a relative mess with lots to drop and frontal line segs
 #trying a GIS coarse clip via st_union(st_convex_hull(sites)) was really unsatisfying
-#so using a graph backtrace from known/desired outlets
-# to manually find outlets: mapview(sf_hr_flw)
+#so using a graph backtrace from known/desired outlets found manually: mapview(sf_hr_flw)
 
+to_sfn <- function(h12, nhd_outlet) {
+  sfn <- sf_hr_flw |> 
+    filter(
+      dasqkm_tot > 0,
+      HUC12 == h12, 
+    ) |> 
+    sfnetworks::as_sfnetwork() 
+  sfn <- sfn |> 
+    tidygraph::convert(
+      tidygraph::to_local_neighborhood,
+      node = filter(as_tibble(sfn, "edges"), NHDPlusID == nhd_outlet)$to,
+      mode = "in", 
+      order = tidygraph::with_graph(sfn, tidygraph::graph_order())
+      ,
+      .clean = T
+    )
+  return(sfn)
+}
+```
+
+### HC
+
+```{r ssnbler_hc_sta, eval=FALSE}
 strm_to_ssn <- "171100180107_Stavis_55000800121057" #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- "55000800121057"
 
-sfn <- sf_hr_flw |> 
-  filter(
-    dasqkm_tot > 0,
-    HUC12 == "171100180107"
-    ) |> 
-  sfnetworks::as_sfnetwork() 
-sfn <- sfn |> 
-  tidygraph::convert(
-    tidygraph::to_local_neighborhood,
-    node = filter(as_tibble(sfn, "edges"), NHDPlusID == outlet_id)$to,
-    mode = "in", 
-    order = tidygraph::with_graph(sfn, tidygraph::graph_order())
-    ,
-    .clean = T
-  )
-
+sfn <- to_sfn(h12 = "171100180107", nhd_outlet = "55000800121057")
 mapview(list(sfn = as_tibble(sfn, "edges"), sites = sf_site_meta |> filter(str_detect(strm, "Stavis"))), zcol = c("slope","strm"))
 
 #first pass reveals issues
@@ -289,41 +293,20 @@ obs <- SSNbler::sites_to_lsn(
   save_local = TRUE, overwrite = TRUE
 )
 
-rm(outlet_id, nodes, errors, sfn, sites)
+rm(sites, sfn, edges, nodes, errors, obs, strm_to_ssn, dir_ssn)
 
 ```
 
 ```{r ssnbler_hc_sea, eval=FALSE}
 strm_to_ssn <- "171100180107_Seabeck_55000800007261" #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- "55000800007261"
 
-sfn <- sf_hr_flw |> 
-  filter(
-    dasqkm_tot > 0,
-    HUC12 == "171100180107"
-    ) |> 
-  sfnetworks::as_sfnetwork() 
-sfn <- sfn |> 
-  tidygraph::convert(
-    tidygraph::to_local_neighborhood,
-    node = filter(as_tibble(sfn, "edges"), NHDPlusID == outlet_id)$to,
-    mode = "in", 
-    order = tidygraph::with_graph(sfn, tidygraph::graph_order())
-    ,
-    .clean = T
-  )
-
+sfn <- to_sfn(h12 = "171100180107", nhd_outlet = "55000800007261")
 mapview(list(sfn = as_tibble(sfn, "edges"), sites = sf_site_meta |> filter(str_detect(strm, "Seabeck"))), zcol = c("slope","strm"))
 
-#first pass reveals issues
 edges <- SSNbler::lines_to_lsn(
-  streams = as_tibble(sfn, "edges") |> select(-from, -to),
-  lsn_path = dir_ssn,
-  check_topology = TRUE,
-  snap_tolerance = 1,
-  topo_tolerance = 20,
-  overwrite = TRUE
+  streams = as_tibble(sfn, "edges") |> select(-from, -to), lsn_path = dir_ssn,
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
 )
 # 1 outlet 1 issue
 edges <- edges |> 
@@ -335,10 +318,8 @@ errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) # |> as_tibble()
 sites <- sf_site_meta |> filter(str_detect(strm, "Seabeck")) |> 
   select(cmplx_strm:bankfull_width_max, contains("per100")) 
 
-mapview::mapview(list(
-  flw = edges, nod = nodes, err = errors,
-  sites = sites
-  ),
+mapview::mapview(
+  list(flw = edges, nod = nodes, err = errors, sites = sites),
   zcol = c("dasqkm_tot","nodecat","error", "strm"))
 
 #now overwrite after drops
@@ -403,54 +384,420 @@ obs <- SSNbler::sites_to_lsn(
   save_local = TRUE, overwrite = TRUE
 )
 
-rm(outlet_id, nodes, errors, sfn, sites)
+rm(sites, sfn, edges, nodes, errors, obs, strm_to_ssn, dir_ssn)
 
 ```
 
-
-```{r ssnbler_hc_bbc}
+```{r ssnbler_hc_bbc, eval=FALSE}
 strm_to_ssn <- "171100180107_BigBeef_55000800196966" #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- "55000800196966"
+
+sfn <- to_sfn(h12 = "171100180107", nhd_outlet = "55000800196966")
+sites <- sf_site_meta |> filter(str_detect(strm, "Beef")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sites), zcol = c("slope","strm"))
+
+edges <- SSNbler::lines_to_lsn(
+  streams = as_tibble(sfn, "edges") |> select(-from, -to), lsn_path = dir_ssn, 
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
+)
+# 1 outlet 1 issue
+edges <- edges |> 
+  left_join(read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid") |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+nodes <- sf::st_read(file.path(dir_ssn, "nodes.gpkg"))
+errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) 
+#20 pseudonodes but relatively few at periphery so removing most would create separate subgraphs
+#could drop pointid %in% c(10, 60) and perhaps a few others but leaving for now
+mapview::mapview(
+  list(flw = edges, nod = nodes, err = errors, sites = sites),
+  zcol = c("dasqkm_tot","nodecat","error", "strm"))
+
+edges <- edges |> 
+  select(-fromnode, -tonode) |> 
+  filter(
+    !(NHDPlusID %in% c(
+      #drop the edge with smallest drainage area at complex converg, confirmed manually
+      edges |> 
+        inner_join(
+          as_tibble(errors) |> filter(error == "Complex Confluence"),
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(tonode, dasqkm_tot) |> 
+        slice_min(dasqkm_tot, by = tonode) |> 
+        pull(NHDPlusID)
+      ,
+      #drop tiny headwaters with 0 dasqkm_tot
+      edges |> filter(dasqkm_tot == 0) |> pull(NHDPlusID)
+    ))
+  ) |> 
+  SSNbler::lines_to_lsn(
+  lsn_path = dir_ssn,
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
+)
+
+obs <- SSNbler::sites_to_lsn(
+  sites = sites,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 215,
+  save_local = TRUE, overwrite = TRUE
+)
+sort(set_names(obs$snapdist, obs$site))
+sites |> anti_join(as_tibble(obs), by = "site") |> select(site)
+#check snaps are good
+mapview::mapview(list(
+  edges = edges, 
+  obs = obs |> select(site, rid),
+  sites = sites
+  ), zcol = c("rid","rid","strm"))
+
+#add edge covars now that points are associated to lines
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:slope),
+      by = "rid")
+  ,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 215,
+  save_local = TRUE, overwrite = TRUE
+)
+
+rm(sites, sfn, edges, nodes, errors, obs, strm_to_ssn, dir_ssn)
 
 ```
 
-
-```{r ssnbler_hc_and}
+```{r ssnbler_hc_and, eval=FALSE}
 strm_to_ssn <- "171100180107_LAnderson_55000800045870" #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- "55000800045870"
+
+sfn <- to_sfn(h12 = "171100180107", nhd_outlet = "55000800045870")
+sites <- sf_site_meta |> filter(str_detect(strm, "Anderson")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sites), zcol = c("slope","strm"))
+
+edges <- SSNbler::lines_to_lsn(
+  streams = as_tibble(sfn, "edges") |> select(-from, -to), lsn_path = dir_ssn, 
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
+)
+#no further cleaning...1 outlet, no errors, only a couple of nonsig pseudonodes
+edges <- edges |> 
+  left_join(read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid") |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+nodes <- sf::st_read(file.path(dir_ssn, "nodes.gpkg"))
+#errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) 
+mapview::mapview(
+  list(sites = sites, flw = edges, nod = nodes),
+  zcol = c("strm","dasqkm_tot","nodecat"))
+
+#snaps all look good but AND002 appears to be on a tiny trib with no flowline
+#so dropping as snapping to rid 16 like AND031 would be wrong
+obs <- SSNbler::sites_to_lsn(
+  sites = sites |> filter(site != "AND002"),
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 180,
+  save_local = TRUE, overwrite = TRUE
+)
+sort(set_names(obs$snapdist, obs$site))
+sites |> anti_join(as_tibble(obs), by = "site") |> select(site)
+mapview::mapview(list(
+  edges = edges, 
+  obs = obs |> select(site, rid),
+  sites = sites
+  ), zcol = c("rid","rid","strm"))
+
+#add edge covars now that points are associated to lines
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:slope),
+      by = "rid")
+  ,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 215,
+  save_local = TRUE, overwrite = TRUE
+)
+
+rm(sites, sfn, edges, nodes, errors, obs, strm_to_ssn, dir_ssn)
 
 ```
 
 ### ST
 
-```{r ssnbler_st_deep}
-strm_to_ssn <- "171100210304_Deep_" #HUC12, stream, outlet NHDPlusID
+```{r ssnbler_st_deep, eval=FALSE}
+strm_to_ssn <- "171100210304_Deep_55000800078356" #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- ""
+
+sfn <- to_sfn(h12 = "171100210304", nhd_outlet = "55000800078356")
+sites <- sf_site_meta |> filter(str_detect(strm, "Deep")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sites), zcol = c("slope","strm"))
+
+edges <- SSNbler::lines_to_lsn(
+  streams = as_tibble(sfn, "edges") |> select(-from, -to), lsn_path = dir_ssn, 
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
+)
+
+edges <- edges |> 
+  left_join(read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid") |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+nodes <- sf::st_read(file.path(dir_ssn, "nodes.gpkg"))
+errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) 
+mapview::mapview(
+  list(sites = sites, flw = edges, nod = nodes, err = errors),
+  zcol = c("strm","dasqkm_tot","nodecat","error"))
+
+edges <- edges |> 
+    anti_join(
+    as_tibble(nodes) |> 
+      filter(
+        nodecat=="Pseudonode",
+        !(pointid %in% c(28,30,31,32,158,217,242,300,348,429,439))
+        ),
+    by = c("tonode" = "pointid")) |> 
+  select(-fromnode, -tonode) |> 
+  filter(
+    !(NHDPlusID %in% c(
+      #drop the edge with smallest drainage area at complex converg, confirmed manually
+      edges |> 
+        inner_join(
+          as_tibble(errors) |> filter(error == "Complex Confluence"),
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(tonode, dasqkm_tot) |> 
+        slice_min(dasqkm_tot, by = tonode) |> 
+        pull(NHDPlusID)
+      ,
+      #plus the extra tiny subbasin above one of the dropped complex conf
+      "55000800267304","55000800267305","55000800116385","55000800116384",
+      #could drop a trib that causes a bad snap of DEW765: "55000800267373",
+      #drop tiny headwaters 
+      edges |> filter(dasqkm_tot < 0.01) |> 
+        #left_join(as_tibble(nodes), by = c("fromnode"="pointid")) #to confirm nothing further upstream
+        pull(NHDPlusID)
+    ))
+  ) |> 
+  SSNbler::lines_to_lsn(
+  lsn_path = dir_ssn,
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
+)
+
+# nudging DEW765, better than dropping 55000800267373
+sites$geometry[sites$site == "DEW765"] <- st_point(c(776165 + 200, 1045445))
+
+obs <- SSNbler::sites_to_lsn(
+  sites = sites,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 125,
+  save_local = TRUE, overwrite = TRUE
+)
+sort(set_names(obs$snapdist, obs$site))
+sites |> anti_join(as_tibble(obs), by = "site") |> select(site)
+#check snaps are good
+mapview::mapview(list(
+  edges = edges, 
+  obs = obs |> select(site, rid),
+  sites = sites
+  ), zcol = c("rid","rid","strm"))
+
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:slope),
+      by = "rid")
+  ,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 125,
+  save_local = TRUE, overwrite = TRUE
+)
+
+rm(sites, sfn, edges, nodes, errors, obs, strm_to_ssn, dir_ssn)
+
 ```
 
-
-```{r ssnbler_st_wtwn}
-strm_to_ssn <- "171100210303_WTwin_" #HUC12, stream, outlet NHDPlusID
+```{r ssnbler_st_wtwn, eval=FALSE}
+strm_to_ssn <- "171100210303_WTwin_55000800192401" #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- ""
+
+sfn <- to_sfn(h12 = "171100210303", nhd_outlet = "55000800192401")
+sites <- sf_site_meta |> filter(str_detect(strm, "West")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sites), zcol = c("slope","strm"))
+
+edges <- SSNbler::lines_to_lsn(
+  streams = as_tibble(sfn, "edges") |> select(-from, -to), lsn_path = dir_ssn, 
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
+)
+
+edges <- edges |> 
+  left_join(read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid") |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+nodes <- sf::st_read(file.path(dir_ssn, "nodes.gpkg"))
+errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) 
+mapview::mapview(
+  list(sites = sites, flw = edges, nod = nodes, err = errors),
+  zcol = c("strm","dasqkm_tot","nodecat","error"))
+
+edges <- edges |> 
+  select(-fromnode, -tonode) |> 
+  filter(
+    !(NHDPlusID %in% c(
+      #dropping multiple tiny edges at complex converg, confirmed manually
+      edges |> 
+        inner_join(
+          as_tibble(errors) |> filter(error == "Complex Confluence"),
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(tonode, dasqkm_tot) |> 
+        filter(tonode %in% c(78, 160)) |> 
+        pull(NHDPlusID)
+      ,
+      #plus the extra tiny subbasin above the third downstream complex conf
+      "55000800002776","55000800078491","55000800002777",
+      #drop tiny headwaters 
+      edges |> filter(dasqkm_tot < 0.01) |> 
+        #left_join(as_tibble(nodes), by = c("fromnode"="pointid")) #to confirm nothing further upstream
+        pull(NHDPlusID)
+      ,
+      #plus a tiny trib that makes a bad snap for DEW068
+      "55000800040717"
+    ))
+  ) |> 
+  SSNbler::lines_to_lsn(
+  lsn_path = dir_ssn,
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
+)
+
+#only need dist to 145 except for DEW661
+obs <- SSNbler::sites_to_lsn(
+  sites = sites,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 235,
+  save_local = TRUE, overwrite = TRUE
+)
+sort(set_names(obs$snapdist, obs$site))
+sites |> anti_join(as_tibble(obs), by = "site") |> select(site)
+#check snaps are good
+mapview::mapview(list(
+  edges = edges, 
+  obs = obs |> select(site, rid),
+  sites = sites
+  ), zcol = c("rid","rid","strm"))
+
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:slope),
+      by = "rid")
+  ,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 235,
+  save_local = TRUE, overwrite = TRUE
+)
+
+rm(sites, sfn, edges, nodes, errors, obs, strm_to_ssn, dir_ssn)
 ```
 
-
-```{r ssnbler_st_etwn}
-strm_to_ssn <- "171100210302_ETwin_" #HUC12, stream, outlet NHDPlusID
+```{r ssnbler_st_etwn, eval=FALSE}
+strm_to_ssn <- "171100210302_ETwin_55000800078543" #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- ""
+
+sfn <- to_sfn(h12 = "171100210302", nhd_outlet = "55000800078543")
+sites <- sf_site_meta |> filter(str_detect(strm, "East")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sites), zcol = c("slope","strm"))
+
+edges <- SSNbler::lines_to_lsn(
+  streams = as_tibble(sfn, "edges") |> select(-from, -to), lsn_path = dir_ssn, 
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
+)
+
+edges <- edges |> 
+  left_join(read_csv(file.path(dir_ssn, "noderelationships.csv")), by = "rid") |> 
+  select(NHDPlusID, rid, fromnode, tonode, everything()) 
+nodes <- sf::st_read(file.path(dir_ssn, "nodes.gpkg"))
+errors <- sf::st_read(file.path(dir_ssn, "node_errors.gpkg")) 
+mapview::mapview(
+  list(sites = sites, flw = edges, nod = nodes, err = errors),
+  zcol = c("strm","dasqkm_tot","nodecat","error"))
+
+edges <- edges |> 
+  select(-fromnode, -tonode) |> 
+  filter(
+    !(NHDPlusID %in% c(
+      #confirmed manually
+      edges |> 
+        inner_join(
+          as_tibble(errors) |> filter(error == "Complex Confluence"),
+          by = c("tonode" = "pointid")    
+        ) |> 
+        arrange(tonode, dasqkm_tot) |> 
+        slice_min(dasqkm_tot, by = tonode) |> 
+        pull(NHDPlusID)
+      ,
+      #drop tiny headwaters 
+      edges |> filter(dasqkm_tot < 0.01) |> 
+        #left_join(as_tibble(nodes), by = c("fromnode"="pointid")) #to confirm nothing further upstream
+        pull(NHDPlusID)
+      ,
+      #drop to stop bad snaps for DEW446, DEW158, DEW048
+      "55000800154522","55000800002784","55000800040752"
+    ))
+  ) |> 
+  SSNbler::lines_to_lsn(
+  lsn_path = dir_ssn,
+  check_topology = TRUE, snap_tolerance = 1, topo_tolerance = 20, overwrite = TRUE
+)
+
+#nudging to keep a smaller snapdist
+sites$geometry[sites$site == "DEW106"] <- st_point(c(810339 - 100 , 1038275))
+
+obs <- SSNbler::sites_to_lsn(
+  sites = sites,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 110,
+  save_local = TRUE, overwrite = TRUE
+)
+sort(set_names(obs$snapdist, obs$site))
+sites |> anti_join(as_tibble(obs), by = "site") |> select(site)
+#check snaps are good
+mapview::mapview(list(
+  edges = edges, 
+  obs = obs |> select(site, rid),
+  sites = sites
+  ), zcol = c("rid","rid","strm"))
+
+obs <- SSNbler::sites_to_lsn(
+  sites = obs |> 
+    left_join(
+      as_tibble(edges) |> 
+        select(rid, NHDPlusID, length_km:slope),
+      by = "rid")
+  ,
+  edges = edges, lsn_path = dir_ssn, file_name = "obs",
+  snap_tolerance = 110,
+  save_local = TRUE, overwrite = TRUE
+)
+
+rm(sites, sfn, edges, nodes, errors, obs, strm_to_ssn, dir_ssn)
+
 ```
 
 ### LC
 
 ```{r ssnbler_lc_mill}
-strm_to_ssn <- "170800030605_Mill_"  #HUC12, stream, outlet NHDPlusID
+strm_to_ssn <- "170800030605_Mill_55000300323139"  #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- ""
+
+
+sfn <- to_sfn(h12 = "170800030605", nhd_outlet = "55000300323139")
+sites <- sf_site_meta |> filter(str_detect(strm, "Mill")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sites), zcol = c("slope","strm"))
 
 ```
 
@@ -458,7 +805,11 @@ outlet_id <- ""
 ```{r ssnbler_lc_aber}
 strm_to_ssn <- "170800030604_Abernathy_" #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- ""
+
+sfn <- to_sfn(h12 = "170800030604", nhd_outlet = "55000300323141")
+sites <- sf_site_meta |> filter(str_detect(strm, "Aber")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sites), zcol = c("slope","strm"))
 
 ```
 
@@ -466,8 +817,11 @@ outlet_id <- ""
 ```{r ssnbler_lc_germ}
 strm_to_ssn <- "170800030603_Germany_" #HUC12, stream, outlet NHDPlusID
 dir_ssn <- file.path("../ssn_data", strm_to_ssn)
-outlet_id <- ""
 
+sfn <- to_sfn(h12 = "170800030603", nhd_outlet = "55000300400697")
+sites <- sf_site_meta |> filter(str_detect(strm, "Germ")) |> 
+  select(cmplx_strm:bankfull_width_max, contains("per100")) 
+mapview(list(sfn = as_tibble(sfn, "edges"), sites = sites), zcol = c("slope","strm"))
 
 ```
 
