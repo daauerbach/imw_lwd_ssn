@@ -53,6 +53,8 @@ library("patchwork")
 library("gt")
 theme_set(theme_minimal()) 
 
+library(SSN2)
+
 dir_data_common <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common"
 epsg <- 2927 #WA state standard; NAD83(HARN)/ft
 
@@ -1825,69 +1827,9 @@ full_join(
 
 ## SSN fitting
 
-```{r}
-#testing that list will run for all 3 cmplx
-f <- map(
-  ssns[c(1,4,8)]
-  ,
-  function(ssn_strm, lhs = "vlwd_per100_sd", rhs = "dasqkm_tot + elev_min + slope"){
-    SSN2::ssn_glm(
-      formula = as.formula(paste(lhs, "~", rhs)),
-      ssn.object = ssn_strm,
-      family = "Gamma", 
-      tailup_type = "exponential",
-      taildown_type = "none",
-      euclid_type = "gaussian",
-      additive = "afvArea"
-    ) 
-  } 
-)
-
-
-```
-
-
-```{r rebuild_ssn_list}
-#https://usepa.github.io/SSN2/articles/introduction.html#background
-library(SSN2)
-
-dir_ssn <- grep(".ssn$", list.dirs("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/ssn_data"), value = T)
-dir_ssn <- set_names(dir_ssn, str_remove(basename(dir_ssn), ".ssn"))
-
-ssn <- map(dir_ssn,
-  function(path_ssn) {
-    ## if rebuilding or if strm.ssn/distance needs overwrite
-    # ssn <- SSN2::ssn_import(
-    #   path = path_ssn, 
-    #   include_obs = TRUE, 
-    #   predpts = c("preds"), 
-    #   overwrite = TRUE
-    #   )
-    # SSN2::ssn_create_distmat(
-    #   ssn,
-    #   predpts = "preds", 
-    #   among_predpts = TRUE,
-    #   overwrite = TRUE
-    #   )
-    ## otherwise to avoid overwriting OR 'netgeom column is present in sf_data and overwrite = FALSE' error
-    ## rewrite last lines of SSN2::ssn_import to skip rerun of SSN2::create_netgeom and SSN2:::createBinaryID 
-    ## to avoid overwriting `netgeom` col and binaryID.db
-    ssn <- list(
-      edges = st_read(file.path(path_ssn, "edges.gpkg")),
-      obs = st_read(file.path(path_ssn, "sites.gpkg")),
-      preds = list(preds = st_read(file.path(path_ssn, "preds.gpkg"))),
-      path = path_ssn
-    )
-    class(ssn) <- "SSN"
-
-    return(ssn)
-  }
-)
-```
-
 ```{r fit_ssn_glm_wrapper}
-fit_ssn_glm <- function(ssn_strm, lhs = "lwd100_years_cv", rhs = "dasqkm_tot + elev_min + slope"){
-  ssn_glm(
+fit_ssn_glm <- function(ssn_strm, lhs = "vlwd_per100_sd", rhs = "dasqkm_tot + elev_min + slope"){
+  SSN2::ssn_glm(
     formula = as.formula(paste(lhs, "~", rhs)),
     ssn.object = ssn_strm,
     family = "Gamma", 
@@ -1900,172 +1842,6 @@ fit_ssn_glm <- function(ssn_strm, lhs = "lwd100_years_cv", rhs = "dasqkm_tot + e
 
 ```
 
-### drop/revise: iterate all model formulas
-
-*this was worth doing but needs dropping or revising to RMSPE only* given this from vignette: "The estimation method is specified via the estmethod argument, which has a default value of "reml" for restricted maximum likelihood (REML). The other estimation method is "ml" for maximum likelihood (ML). REML is chosen as the default because it tends to yield more accurate covariance parameter estimates than ML, especially for small sample sizes. One nuance of REML, however, is that comparisons of likelihood-based statistics like AIC are only valid when the models have the same fixed effects structure (i.e., the same formula). To compare fixed effects and covariance structures simultaneously, use ML or a model comparison tool that is not likelihood-based, such as cross validation via loocv(), which we discuss later."
-
-iterate fits and diagnostics, map (all) alternative model formulas per single stream
-```{r mod_forms}
-yvars <- c("lwd100_med", "lwd100_years_cv") 
-xvars <- c("dasqkm_tot", "elev_min", "slope", "bnkwdth_p50_med")
-
-mod_forms <- expand_grid(
-  lhs = yvars
-  ,
-  rhs = unlist(map(
-    1:length(xvars),
-    ~combn(xvars, .x, simplify = T) |> 
-      apply(2, paste, collapse = " + ")
-  ))
-  ) |> 
-  mutate(
-    f = paste(lhs, rhs, sep = " ~ ")
-    #,f = map(f, as.formula)
-  ) |> 
-  pull(f)
-```
-
-```{r INITIALgt_glm_ssn_lwd_fit}
-#this is not instant but also not terrible considering
-ssn_lwd_mill <- map(
-  mod_forms,
-  \(f){
-    fit <- ssn_glm(
-      formula = as.formula(f),
-      ssn.object = ssn$Mill,
-      family = "Gamma",
-      tailup_type = "exponential",
-      taildown_type = "none",
-      euclid_type = "gaussian",
-      additive = "afvArea"
-    )
-    #for now do not care about full object
-    return(list(
-      fit_formula = format(fit$formula),
-      fit_measures = broom::glance(fit),
-      fit_coefs = broom::tidy(fit)
-    ))
-  }
-)
-
-ssn_lwd_mill |> 
-  map(
-    ~.x$fit_measures |> 
-      mutate(
-        f = format(.x$fit_formula),
-        lhs = str_split_1(f, " ~ ")[1]
-        )
-    ) |> 
-  bind_rows() |> 
-  #arrange(desc(pseudo.r.squared)) |> 
-  arrange(AICc) |> 
-  select(lhs, f, psdo_r2 = pseudo.r.squared, AICc, logLik
-         #, dev = deviance
-         ) |> 
-  split(~lhs) |> 
-  map(
-    ~.x |> 
-      gt(groupname_col = "lhs", rowname_col = "f") |> 
-      fmt_number(decimals = 3) |> 
-      data_color(columns = "psdo_r2", direction = "column", method = "quantile", palette = "Purples", reverse = F) |> 
-      data_color(columns = "AICc", direction = "column", method = "quantile", palette = "Oranges", reverse = T) |> 
-      data_color(columns = "logLik", direction = "column", method = "quantile", palette = "Blues", reverse = F)
-  )
-
-```
-
-```{r ssn_lwd_med_mod_forms}
-#expect a couple of minutes
-ssn_lwd_med <- expand_grid(
-  strm = names(ssn),
-  form = grep("lwd100_med", mod_forms, value = T)
-  ) |> 
-  mutate(
-    ssn_glm = map2(
-      strm, form,
-      \(s,f){
-        fit <- fit_ssn_glm(ssn_strm = ssn[[s]], frm = f)
-        return(list(
-              #fit_formula = format(fit$formula),
-              fit_measures = broom::glance(fit),
-              fit_loo = SSN2::loocv(fit),
-              fit_coefs = broom::tidy(fit)
-            ))
-      }
-  )
-)
-
-ssn_lwd_med <- ssn_lwd_med |> 
-  unnest_wider(ssn_glm, simplify = F) |>
-  unnest_wider(c(fit_measures, fit_loo))
-
-```
-
-*text to revise, dropping AICc if keeping anything*
-
-Models of the long term 'characteristic' large wood density, measured as the median across years, were better fit for Mill Creek. The largest leave-one-out cross-validation root mean square prediction error (RMSPE) in Mill (2.19) was still smaller than the smallest in Abernathy (2.87) and Germany (3.01). A slope-only model had the lowest AICc value in all three streams, and slope was included with drainage area or bankfull width or both in the other models with lower AICc for all streams. However, in Mill Creek, the two models with the smallest LOO prediction error did not include slope as a predictor, and the coefficient estimate for slope was rarely statistically signficant (at 0.05). In contrast, drainage area and (positively correlated) bankfull width had highly significant estimates in many model formulations for Mill and Abernathy Creeks. No physiographic predictor was even weakly significant (at 0.1) in any model for Germany Creek.
-
-```{r gt_glm_ssn_lwd_med}
-ssn_lwd_med |> 
-  select(
-    strm, form, AICc, 
-    #psdo_r2 = pseudo.r.squared,
-    RMSPE
-    ) |> 
-  #arrange(strm, AICc) |> 
-  pivot_wider(names_from = strm, values_from = where(is.numeric)) |> 
-  select(form, contains("Mill"), contains("Abernathy"), contains("Germany")) |>
-  arrange(AICc_Mill) |> 
-  #mutate(across(where(is.numeric), list(rnk = ~rank(.)))) |> select(form, contains("rnk"), -contains("RMSPE"))
-  #mutate(across(where(is.numeric), list(rnk = ~rank(.)))) |> select(form, contains("rnk"), -contains("AICc"))
-  
-  gt(
-    #groupname_col = "strm", 
-    rowname_col = "form"
-  ) |> 
-  tab_header(
-    title = "Model diagnostics of SSN GLM Gamma regression of characteristic large wood density",
-    subtitle = "Exponential tail-up and Gaussian Euclidean covariance"
-  ) |> 
-  # tab_spanner("Mill", columns = contains("Mill")) |> 
-  # tab_spanner("Abernathy", columns = contains("Abernathy")) |> 
-  # tab_spanner("Germany", columns = contains("Germany")) |> 
-  # cols_label_with(fn = ~str_remove(., "Mill|Abernathy|Germany")) |> 
-  tab_spanner("AICc", columns = contains("AICc")) |> 
-  tab_spanner("LOO RMSPE", columns = contains("RMSPE")) |> 
-  cols_label_with(fn = ~str_remove(., "AICc_|RMSPE_")) |> 
-  fmt_number(starts_with("AIC"), decimals = 1) |> 
-  #fmt_number(contains("psdo_r2"), decimals = 2) |> 
-  fmt_number(starts_with("RMSPE"), decimals = 2) |> 
-  data_color(columns = starts_with("AIC"), method = "numeric", palette = "Oranges", reverse = T) |> 
-  data_color(columns = starts_with("psdo_r2"), method = "numeric", palette = "Purples", reverse = F) |> 
-  data_color(columns = starts_with("RMSPE"), method = "numeric", palette = "Blues", reverse = T) 
- 
-  # data_color(columns = "RMSPE_Mill", direction = "column", method = "numeric", palette = "Blues", reverse = T) |> 
-  # data_color(columns = "RMSPE_Abernathy", direction = "column", method = "numeric", palette = "Blues", reverse = T) |> 
-  # data_color(columns = "RMSPE_Germany", direction = "column", method = "numeric", palette = "Blues", reverse = T)
-
-```
-
-```{r coef_signif}
-ssn_lwd_med |> 
-  group_by(strm) |> 
-  slice_min(AICc, n = 1) |> 
-  unnest(fit_coefs) |> filter(term == "slope")
-
-ssn_lwd_med |> 
-  unnest(fit_coefs) |> 
-  select(strm, form, AICc, RMSPE, term, estimate, p.value) |> 
-  filter(
-    term != "(Intercept)",
-    p.value <= 0.1
-    ) |> 
-  arrange(form, p.value) |> 
-  #print(n=Inf)
-  split(~strm)
-  
-
-```
 
 ### full models per basin
 
