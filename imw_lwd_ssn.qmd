@@ -1475,18 +1475,20 @@ map(
       show.legend = T
     ) +
     geom_hline(yintercept = 1, linetype = 2) +
-    scale_x_log10(
-      name = "Reach DA (km^2)",
-      limits = c(0.01, 100),
-      breaks = scales::breaks_log(), 
-      labels = scales::label_log()
-    ) +
+    # scale_x_log10(
+    #   name = "Reach DA (km^2)",
+    #   limits = c(0.1, 100),
+    #   breaks = scales::breaks_log(), 
+    #   labels = scales::label_log()
+    # ) +
     scale_y_continuous(name = "VLWD100 CV") +
     scale_color_manual(values = c("lightblue","darkblue","tan","orange"),
                        aesthetics = c("color","fill")
     ) +
     guides(color = guide_colorsteps(title = "Avg. reach slope"),
            fill = guide_none()) +
+    annotate("segment", x=-Inf, xend=Inf, y=-Inf, yend=-Inf) +
+    annotate("segment", x=-Inf, xend=-Inf, y=-Inf, yend=Inf) +
     theme(legend.position = "bottom") +
     facet_wrap(~strm, nrow = 1) +
     labs(subtitle = .x)
@@ -1567,7 +1569,57 @@ ssn_edges |>
   ) +
   scale_color_manual(values = pal_strm)
 
+
+ssn_edges |> 
+  filter(imw_sampled == "with site") |> 
+  mutate(vlwd_per100_cv = vlwd_per100_sd / vlwd_per100_mean) |> 
+  ggplot() + 
+  #stat_ecdf(aes(vlwd_per100_cv, color = cmplx_strm), linewidth = 1.5) +
+  ggridges::geom_density_ridges(aes(vlwd_per100_cv, cmplx_strm, color = cmplx_strm, fill = cmplx_strm)) +
+  geom_vline(xintercept = c(0.5, 1)) +
+  scale_color_manual(values = pal_cmplx_strm, aesthetics = c("color","fill"))
+
 ```
+
+relative to CV > 0.75
+
+  - Deep: 2 sites headwaters, 1 near outlet
+  - WTwin: 4 hdwtr, 2 outlet
+  - ETwin: 5 all above lower mainstem, 3 on E fork
+  - Stavis: 2 hdwtr, 1 mainstem near 4 tribs, 1 outlet
+  - Seabeck: 3 hdwtr, 7 lower mainstem and outlet
+  - BBC: 3 hdwtr (above Symington), 1 outlet
+  - LA: 3 hdwtr, 1 outlet
+  - Mill: 3 lower main and outlet
+  - Abe: upper resto sites
+  - Germ: 5 hdwter, 1 mid/lower mainstem
+
+```{r gg_ssn_vlwd100_CV_map}
+
+gg_sf_cv <- map(
+  c("Straits of Juan de Fuca", "Hood Canal", "Lower Columbia")
+  ,
+  ~ggplot() +
+    geom_sf(data = filter(sf_ssn_edges, cmplx_desc == .x), aes(color = strm), linewidth = 0.5) +
+    geom_sf(
+      data = filter(sf_ssn_sites, cmplx_desc == .x) |> 
+        mutate(vlwd_per100_cv = vlwd_per100_sd / vlwd_per100_mean)
+      , 
+      aes(size = vlwd_per100_cv, fill = strm),
+      alpha = 0.7, shape = 24, color = "black",
+      ) +
+    scale_color_manual(values = pal_strm, aesthetics = c("color","fill")) +
+    scale_size_binned_area(
+      #breaks = c(0, 0.5, 1, 2.5), 
+      breaks = c(0, 0.75), 
+      limits = c(0,2.5)
+      ) +
+    ggspatial::annotation_scale() +
+    theme(axis.text = element_blank())
+  ) # |> wrap_plots(nrow = 3, guides = "collect")
+
+```
+
 
 ### corrr
 
@@ -1586,7 +1638,24 @@ ssn_sites <- as_tibble(sf_ssn_sites) |> #267
   mutate(
     vlwd_per100_cv = vlwd_per100_sd / vlwd_per100_mean
   )
-  
+ 
+# ssn_sites |> 
+#   ggplot(aes(vlwd_per100_sd, vlwd_per100_cv, color = cmplx_strm)) + 
+#   geom_point() + scale_color_manual(values = pal_cmplx_strm) +
+#   facet_wrap(~cmplx_desc)
+
+#expected clear pos reln for sd ~ mean
+#some strong neg for cv ~ mean
+#but cv not sharply reln to sd...
+ssn_sites |>
+  select(cmplx_desc, cmplx_strm, starts_with("vlwd")) |> 
+  GGally::ggpairs(
+    mapping = aes(color = cmplx_strm, alpha = 0.8),
+    columns = c(3:5),
+    upper = list(continuous = GGally::wrap("cor", method = "spearman", digits = 2))  
+    ) +
+  scale_color_manual(values = pal_cmplx_strm)
+
 ```
 
 nicely displays that bankfull width has (expected) strong positive relationship with drainage area and moderate negative reln with slope
@@ -2045,6 +2114,90 @@ fit_ssn_glm <- function(ssn_strm, lhs = "vlwd_per100_sd", rhs = "dasqkm_tot + el
 
 ```
 
+```{r ssn_vlwd_cv}
+#note above how cv and sd have mixed reln across streams...
+f_sd <- fit_ssn_glm(ssns$`171100210302_ETwin_55000800078543`, lhs = "vlwd_per100_sd", rhs = "dasqkm_tot + elev_min + slope")
+f_cv <- fit_ssn_glm(ssns$`171100210302_ETwin_55000800078543`, lhs = "(vlwd_per100_sd / vlwd_per100_mean)", rhs = "dasqkm_tot + elev_min + slope")
+
+filter(sf_ssn_sites, str_detect(strm, "East")) |> 
+  mutate(vlwd_per100_cv = vlwd_per100_sd / vlwd_per100_mean) |> 
+  select(cmplx_strm, site, dasqkm_tot, vlwd_per100_sd, vlwd_per100_cv) |> 
+  #ggplot(aes(vlwd_per100_sd, vlwd_per100_cv)) + geom_point()
+  pivot_longer(cols = starts_with("vlwd")) |> 
+  #ggplot(aes(dasqkm_tot, value, color = name)) + geom_point() + geom_smooth(method = "lm") + facet_wrap(~name, scales = "free_y")
+  split(~name) |> 
+  map(
+    ~ggplot(.x) + 
+      geom_sf(aes(size = value, color = value)) +
+      scale_color_gradient(low = "yellow", high = "purple") +
+      facet_wrap(~name)
+  ) |> 
+  wrap_plots(nrow = 1)
+
+summary(f_sd)
+summary(f_cv)
+  
+
+ssn_vlwd_cv <- map(
+  ssns, ~fit_ssn_glm(.x, lhs = "(vlwd_per100_sd / vlwd_per100_mean)", rhs = "dasqkm_tot + elev_min + slope")
+  )
+
+gg_sf_cv[[1]]
+gg_sf_cv[[2]]
+gg_sf_cv[[3]]
+
+map(ssn_vlwd_cv, summary)
+map(ssn_vlwd_cv, 
+    ~broom::glance(.x) |> mutate(strm = .x$ssn.object$obs$strm[1])
+    ) |> 
+  bind_rows() |> arrange(pseudo.r.squared)
+
+map(ssn_vlwd_cv, 
+    ~broom::tidy(.x, conf.int = T) |> mutate(strm = .x$ssn.object$obs$strm[1])
+    )  |> 
+  bind_rows() |> 
+  filter(p.value < 0.1, term != "(Intercept)")
+
+```
+
+```{r}
+ssn_obs <- map(
+  ssns, 
+  ~as_tibble(.x$obs) |> 
+    mutate(
+      vlwd_per100_cv = vlwd_per100_sd / vlwd_per100_mean,
+      lon = st_coordinates(geom)[,1],
+      lat = st_coordinates(geom)[,2]
+    ) |> 
+    select(
+      cmplx_abrv, cmplx_desc, cmplx_strm, strm, NHDPlusID, site,
+      starts_with("vlwd"), lon, lat, dasqkm_tot, elev_min, slope, upDist, afvArea
+      )
+)
+
+rf_cv <- map(
+  ssn_obs,
+  \(df) {
+    f <- parsnip::rand_forest(
+    mode = "regression", #try censored?
+    trees = 200, min_n = 1
+    ) |> 
+    parsnip::set_engine(engine = "ranger", importance = "impurity") |> 
+    parsnip::fit(
+      formula = vlwd_per100_cv ~ lon + lat + dasqkm_tot + elev_min + slope + upDist + afvArea, 
+      data = df
+    )
+    f$cmplx_strm <- df$cmplx_strm[1]
+    return(f)
+  })
+
+map(rf_cv, ~.x |> vip::vi() |> mutate(cmplx_strm = .x$cmplx_strm))
+map(rf_cv, ~.x |> vip::vip(geom = "point") + labs(subtitle = .x$cmplx_strm)) |> 
+  wrap_plots()
+  
+
+```
+
 
 ### full models per basin
 
@@ -2053,11 +2206,6 @@ prelim takeaway - Mill best of poor fits, DA in Mill only signif covar, substant
 would/could fit a model for bankfull on DA and elev and slope then refit LWD on estimated bankfull...
 
 should do CV (AND mean diff?!?) but also could move to RF or GAM or better nonlin structure
-
-o	Finish lwd100_years_cv prelim SSN gamma
-o	SSNbler for Straits
-o	SSN2 for Straits
-o	RF other nonlin engines using SSN covars
 
 ```{r fit_glm_ssn_lwd_med}
 #in order to fit poisson or negbinom need to rebuild all the way back to `sf_sites_lc <- site_meta_sf`
