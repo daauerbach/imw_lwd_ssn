@@ -1,0 +1,1257 @@
+---
+title: "Stavis LWD"
+format: 
+  dashboard:
+    orientation: columns
+---
+
+issues
+  - lineal vs areal density: areal improves differentiation across reach scales
+    - multiply by 100 to get 'per 100m2'? works for site_year as-is but need to recalc site_meta summary min/mean/max/sd (cannot post-hoc *100?) vcredf
+  - all vs vlwd
+  - central tendency in time vs variation in time
+
+
+```{r}
+#| context: setup
+
+library("tidyverse", quietly = T)
+library("sf")
+library("patchwork")
+library("gt")
+theme_set(theme_minimal()) 
+
+load("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/imw_hab_250307.RData")
+#rm(hab, transects_excluded)
+
+sf_site_year <- sf_site_year |> 
+  filter(
+     strm == "Stavis Creek*",
+    #str_detect(strm, "West|Stavis|Mill"),
+    site != "STA020"
+    )
+sf_site_meta <- sf_site_meta |> 
+  filter(
+    strm == sf_site_year$strm[1], 
+    #str_detect(strm, "West|Stavis|Mill"),
+    site != "STA020"
+    )
+site_year <- site_year |> 
+  filter(
+    strm == sf_site_year$strm[1],
+    #str_detect(strm, "West|Stavis|Mill"),
+    site != "STA020"
+    )
+
+#sf_edges <- st_read("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/ssn_data/171100180107_Stavis_55000800121057/edges.gpkg")
+ssn_sta <- readRDS("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/imw_lwd_ssn/ssns_list.rds")[["171100180107_Stavis_55000800121057"]]
+
+sf_edges <- left_join(
+  ssn_sta$edges |> #82
+    select(NHDPlusID, dasqkm_tot, elev_min, slope, upDist)
+  ,
+  as_tibble(ssn_sta$obs) |> #28 sites on 22 edges
+    select(cmplx_strm, strm, site, NHDPlusID) # |> count(NHDPlusID) |> arrange(desc(n))
+  , 
+  by = "NHDPlusID"  
+)
+
+site_meta <- site_meta |> 
+  semi_join(as_tibble(sf_site_meta), by = "site") |> 
+  left_join(
+    as_tibble(sf_edges) |> select(-geom), 
+    by = c("cmplx_strm","strm","site")
+  )
+
+# bsmp <- maptiles::get_tiles(
+#   st_buffer(st_as_sfc(st_bbox(sf_edges)), 1000)
+#   ,
+#   provider = "Esri.WorldImagery",
+#   crop = TRUE
+#   )
+
+```
+
+the linear-density measure is, by definition, insensitive to bankfull width
+which also means it is unsurprising that it shows little relationship to drainage area and/or elevation...?
+
+```{r vlwd_and_all_m2_and_per100_vs_bankfull}
+{
+site_year |> 
+  ggplot() +
+  # geom_point(aes(bankfull_width, lwd_all_per_m2), color = "purple", alpha = 0.6) + 
+  # geom_smooth(aes(bankfull_width, lwd_all_per_m2), color = "purple", method = "lm", linetype = 3, se = F) +
+  # geom_smooth(aes(bankfull_width, lwd_all_per_m2), color = "purple", method = "loess", linetype = 2, se = F) +
+  geom_point(aes(bankfull_width, 100*lwd_all_per_m2), color = "purple", alpha = 0.6) +
+  geom_smooth(aes(bankfull_width, 100*lwd_all_per_m2), color = "purple", method = "lm", linetype = 3, se = F) +
+  geom_smooth(aes(bankfull_width, 100*lwd_all_per_m2), color = "purple", method = "loess", linetype = 2, se = F) +
+  geom_point(aes(bankfull_width, vlwd_per_m2), color = "orange", alpha = 0.6) + 
+  geom_smooth(aes(bankfull_width, vlwd_per_m2), color = "orange", method = "lm", linetype = 3, se = F) +
+  geom_smooth(aes(bankfull_width, vlwd_per_m2), color = "orange", method = "loess", linetype = 2, se = F) +
+  labs(
+    #y = "Count/m^2", 
+    y = "Count/100m^2", 
+    title = "Stavis Creek large wood",
+    subtitle = "All size classes (purple), 'Very large' (orange, >30cm diam, >5m length)"
+  )
+}+{
+site_year |> 
+  ggplot() +
+  geom_point(aes(bankfull_width, lwd_all_per100), color = "purple", alpha = 0.6) + 
+  geom_smooth(aes(bankfull_width, lwd_all_per100), color = "purple", method = "lm", linetype = 3, se = F) +
+  geom_smooth(aes(bankfull_width, lwd_all_per100), color = "purple", method = "loess", linetype = 2, se = F) +
+  geom_point(aes(bankfull_width, vlwd_per100), color = "orange", alpha = 0.6) + 
+  geom_smooth(aes(bankfull_width, vlwd_per100), color = "orange", method = "lm", linetype = 3, se = F) +
+  geom_smooth(aes(bankfull_width, vlwd_per100), color = "orange", method = "loess", linetype = 2, se = F) +
+  labs(
+    y = "Count/100m", 
+    title = "Stavis Creek large wood",
+    subtitle = "All size classes (purple), 'Very large' (orange, >30cm diam, >5m length)"
+  )
+} + plot_layout(nrow = 2)
+```
+
+is CV valid or inflated by small values?
+
+```{r ols_mean_sd_cv_plots}
+{
+  site_meta |> 
+    ggplot() +
+    geom_pointrange(aes(xmin = bankfull_width_min, x = bankfull_width_mean, y = lwd_all_per_m2_mean, xmax = bankfull_width_max)) +
+    geom_pointrange(aes(ymin = lwd_all_per_m2_min, x = bankfull_width_mean, y = lwd_all_per_m2_mean, ymax = lwd_all_per_m2_max)) +
+    labs(x = "bankfull_width", y = "lwd_all_per_m2", subtitle = "Per-site min and max (whiskers) on mean (point) values across years")
+}+{
+  site_meta |> 
+    ggplot() +
+    geom_pointrange(aes(ymin = lwd_all_per_m2_min, x = dasqkm_tot, y = lwd_all_per_m2_mean, ymax = lwd_all_per_m2_max)) +
+    labs(x = "dasqkm_tot", y = "lwd_all_per_m2")
+}+{
+  site_meta |> 
+    ggplot(aes(bankfull_width_mean, lwd_all_per_m2_sd)) +
+    ggpmisc::stat_poly_line() +
+    ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+    geom_point() +
+    geom_text(aes(label = site), nudge_y = 0.001, hjust = 0) +
+    labs(subtitle = "SD_years lwd/m^2 ~ bankfull width")
+}+{
+  site_meta |> 
+    ggplot(aes(dasqkm_tot, lwd_all_per_m2_sd)) +
+    ggpmisc::stat_poly_line() +
+    ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+    geom_point() +
+    geom_text(aes(label = site), nudge_y = 0.001, hjust = 0) +
+    labs(subtitle = "SD_years lwd/m^2 ~ drainage area")
+}+{
+  site_meta |> 
+    ggplot(aes(bankfull_width_mean, lwd_all_per_m2_sd / lwd_all_per_m2_mean)) +
+    ggpmisc::stat_poly_line() +
+    ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+    geom_point() +
+    geom_text(aes(label = site), nudge_y = 0.005, hjust = 0) +
+    labs(subtitle = "CV_years lwd/m^2 ~ bankfull width")
+}+{
+  site_meta |> 
+    ggplot(aes(dasqkm_tot, lwd_all_per_m2_sd / lwd_all_per_m2_mean)) +
+    ggpmisc::stat_poly_line() +
+    ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+    geom_point() +
+    geom_text(aes(label = site), nudge_y = 0.005, hjust = 0) +
+    labs(subtitle = "CV_years lwd/m^2 ~ drainage area")
+} +
+  plot_layout(nrow = 3)
+
+```
+
+```{r site_map_and_col_time_series}
+{
+ggplot() +
+  tidyterra::geom_spatraster_rgb(data = bsmp, alpha = 0.7) +
+  geom_sf(data = sf_edges, aes(linewidth = log10(dasqkm_tot), color = elev_min)) +
+  geom_sf_text(data = sf_site_meta, aes(label = site), color = "orange") +
+  scale_linewidth_continuous(range = c(0.2, 1.5)) +
+  labs(x = "", y = "")
+}+{
+site_year |> 
+  filter(site %in% c("STA003", "STA014", "STA022")) |> 
+  ggplot(aes(year, lwd_all_per_m2)) +
+  geom_col() +
+  facet_wrap(~site, nrow = 3)
+} + plot_layout(nrow = 1)
+
+# #what happened in 2013?
+# site_year |> 
+#   ggplot(aes(year, lwd_all_per_m2)) +
+#   geom_col() +
+#   geom_vline(xintercept = 2013, color = 2) +
+#   facet_wrap(~site, nrow = 4)
+
+```
+
+lwd_all mapped and vs vlwd
+
+```{r lwd_all_m2_sf_by_year}
+g <- ggplot() +
+  tidyterra::geom_spatraster_rgb(data = bsmp, alpha = 0.7) +
+  geom_sf(data = sf_edges, aes(linewidth = log10(dasqkm_tot), color = elev_min)) +
+  geom_sf(data = sf_site_year, aes(group = year, size = lwd_all_per_m2), stroke = .5, shape = 9, color = pal_strm[1]) +
+  geom_sf(data = sf_site_year, aes(group = year, size = lwd_all_per_m2, alpha = lwd_all_per_m2), shape = 23, fill = pal_strm[1]) +
+  scale_linewidth_continuous(range = c(0.2, 1.5)) +
+  scale_size_area() +
+  wacolors::scale_color_wa_c("mountains") #"ferries"
+
+g + facet_wrap(~year, nrow = 2)
+
+# gganimate::animate(
+#   g + gganimate::transition_time(year) +
+#     gganimate::ease_aes() +
+#     gganimate::enter_fade() + 
+#     #gganimate::exit_fade() +
+#     labs(title = "Stavis Ck LWD dynamics 2007-24", subtitle = 'year: {frame_time}')
+#   , nframes = 2*18, fps = 1
+# )
+# 
+# gganimate::anim_save("anim_stavis_lwd_m2.gif")
+
+```
+
+flatter/less positive/further below 1:1, by definition indicating more small wood per largest...which is numerically the same as 'less large wood per smaller'...but arguably need a fixed count translation to compare identical ratios (i.e., simply 3/6 pieces is not the same as 30/60; and 3/6 vs 3/18 is different again than vs 1/6 )
+
+```{r vlwd_vs_all_by_year}
+#facet year
+#positive correlation across sites consistent through time,
+#but slope varied among years
+g <- site_year |> 
+  ggplot(aes(lwd_all_per_m2, vlwd_per_m2,
+             color = year, group = year)) +
+  geom_abline(intercept = 0, slope = 1, linetype = 2) +
+  geom_vline(xintercept = 0.1, linetype = 3) +
+  geom_hline(yintercept = 0.04, linetype = 3) +
+  geom_point(aes(size = bankfull_width), alpha = 0.6) + 
+  geom_smooth(method = "lm", se = F) +
+  scale_size_area(max_size = 3)
+
+#g
+g + facet_wrap(~year, ncol=6)
+
+# gganimate::animate(
+#   g + gganimate::transition_time(year) +
+#     gganimate::ease_aes() +
+#     gganimate::enter_fade() + 
+#     #gganimate::exit_fade() +
+#     ggtitle('year: {frame_time}')
+#   , nframes = 3*18, fps = 1
+# )
+
+```
+
+this was helpful to dig/reveal further into E branch vs W branch diffs in bankfull affecting per_m2, but not sure that 'all vs very' will be a generally meaningful/interesting story more widely?
+
+```{r vlwd_vs_all_by_site}
+#facet site
+site_year |> 
+  ggplot(aes(lwd_all_per_m2, vlwd_per_m2, color = bankfull_width, group = site)) +
+  geom_abline(intercept = 0, slope = 1, linetype = 2) +
+  geom_point() + geom_smooth(color = "grey10", method = "lm", se = F) +
+  #facet_wrap(~site, nrow = 4)
+  facet_wrap(~site, scales = "free", nrow = 4)
+
+#what is happening STA074 and STA100 vs STA003 and STA014? 
+site_focal <- c("STA074", "STA100", "STA003", "STA014")
+
+#100 on W mainstem just above main junction, 074 somewhat higher up
+#in contrast 3 on E mainstem just below 14, both with several small tribs from E
+#and topo showing steeper hillslopes and valley confinement
+#yet both wider bankfull measures than 74/100
+s <- sf_site_year |> 
+  filter(site %in% site_focal) |> 
+  mutate(across(where(is.double), ~round(.,3)))
+mapview::mapview(s, zcol = "bankfull_width")
+
+sms <- site_meta |> 
+  filter(site %in% site_focal) |> 
+  mutate(across(where(is.double), ~round(.,3)))
+
+#STA003 has most absolute wood/largest avg counts AND larger area --> second highest per_m2
+#while STA014 intermediate counts and larger area --> 3rd per_m2
+#STA100 has least absolute wood/smallest avg counts (half STA003) AND larger area than STA074 --> so lowest per_m2 despite smaller area than 003/014
+#and STA074 has smallest area with intermediate counts --> so highest per_m2
+#takeaway: as interaction of count and reach size, areal density
+#   - highest with more wood and less area (STA074 vs STA100 and 003/014)
+#     - same said differently: lowest with less wood and more area STA100
+#   - higher with more wood despite same area (STA003 vs 014)
+site_year |>  
+  filter(site %in% site_focal) |> 
+  ggplot(aes(site, lgth_wdth, color = site)) + 
+  geom_boxplot(show.legend = F) +
+  geom_jitter(aes(size = lwd_all), alpha = 0.8) +
+  geom_text(
+    data = sms,
+    y = 3600,
+    aes(label = paste(lgth_wdth_mean, 
+                      paste0(lwd_all_mean," [",vlwd_mean,"]"),
+                      paste0(lwd_all_per_m2_mean," [",vlwd_per_m2_mean,"]"),
+                      sep = "\n"))
+  ) +
+  scale_size_area() +
+  labs(x = NULL, y = "Area (m^2) as survey length * mean bankfull width",
+       subtitle = "Values are mean: area, lwd_all count, lwd_all_m2")
+
+#STA074 flat/neg slope (very is same/less as all increase)
+#   most 'all', most 'very'; high 'very:all' b/c years with high 'very'
+#STA100 flat/neg slope (very is same/less as all increase)
+#   least 'all', least 'very'; lowest 'very:all' b/c least 'very'
+#STA003 pos slope (very increases as all increases)
+#   secondmost average 'all' and 'very' (one year with highest both)
+#STA014 pos slope (very increases as all increases)
+#   closer to STA100 in being overall less woody
+#takeaway: 
+# 'very' does not necessarily increase with 'all' (i.e., flat very:all) at both/either woodiest (74) and/or least woody (100)
+# both have some years with lower 'very' at higher 'all', relative to respective means
+site_year |>  
+  filter(site %in% site_focal) |> 
+  # mutate(very_all = vlwd_per_m2 / lwd_all_per_m2) |>
+  # # ggplot(aes(year, very_all, color = site)) + geom_point() + geom_line()
+  # summarise(across(c(contains("per_m2"), very_all), list(mean = ~mean(.,na.rm=T))), .by = site)
+  ggplot(aes(lwd_all_per_m2, vlwd_per_m2, color = site, group = site)) +
+  geom_abline(intercept = 0, slope = 1, linetype = 2) +
+  geom_point(aes(size = bankfull_width), alpha = 0.7, show.legend = F) + 
+  geom_smooth(method = "lm", se = F, show.legend = F) +
+  geom_vline(
+    data = filter(site_meta, site %in% site_focal) |> 
+      select(site, lwd_all_per_m2_mean)
+    , 
+    aes(xintercept = lwd_all_per_m2_mean, color = site), show.legend = F) +
+  geom_hline(
+    data = filter(site_meta, site %in% site_focal) |> 
+      select(site, vlwd_per_m2_mean)
+    , 
+    aes(yintercept = vlwd_per_m2_mean, color = site), show.legend = F) +
+  scale_size_area() +
+  facet_wrap(~site) +
+  labs(subtitle = "point size scaled to bankfull width")
+
+```
+
+
+```{r lwd_all_by_site_vs_preds}
+#W branch narrower than E branch?
+#more and steeper tribs and slightly larger DA on E branch
+ggplot() +
+  geom_sf(data = sf_edges, aes(color = slope), linewidth = 1.1) +
+  wacolors::scale_color_wa_b(palette = "uw", breaks = c(0, 0.05, 0.1, 0.25, 0.6))
+
+as_tibble(sf_edges) |> ggplot(aes(dasqkm_tot, slope)) + geom_point(alpha = 0.6)
+
+#normalization by somewhat larger bankfull widths of E branch highlights upper W branch sites with similarly high avg counts (e.g. >150) in 'smaller' reaches
+{
+ggplot() +
+  geom_sf(data = sf_edges, linewidth = 1.1, color = "lightblue") +
+  geom_sf_text(data = sf_site_meta, aes(label = site), color = "black") +
+  labs(x = "", y = "")
+}+{
+ggplot() +
+  geom_sf(data = sf_edges, linewidth = 1.1, color = "lightblue") +
+  geom_sf_text(data = sf_site_meta, aes(label = round(bankfull_width_mean, 1)), color = "purple") +
+  labs(x = "", y = "")
+}+{
+ggplot() +
+  geom_sf(data = sf_edges, linewidth = 1.1, color = "lightblue") +
+  geom_sf(data = sf_site_meta, 
+          aes(size = lwd_all_mean, alpha = lwd_all_mean), color = "brown") + scale_size_area() +
+  geom_sf_text(data = sf_site_meta, aes(label = round(lwd_all_mean)), color = "darkgreen") +
+  labs(x = "", y = "")
+}+{
+ggplot() +
+  geom_sf(data = sf_edges, linewidth = 1.1, color = "lightblue") +
+  geom_sf(data = sf_site_meta, 
+          aes(size = lwd_all_per_m2_mean, alpha = lwd_all_per_m2_mean), color = "brown") + scale_size_area() +
+  geom_sf_text(data = sf_site_meta, aes(label = round(lwd_all_per_m2_mean,3)), color = "darkgreen") +
+  labs(x = "", y = "")
+} + plot_layout(nrow = 2)
+
+
+site_focal <- c(
+  "STA002", "STA070", #upper W branch
+  "STA008", "STA022", #upper E branch
+  "STA100", #lower W branch just above main E-W junction
+  "STA003", #lower E branch below tribs
+  "STA078", "STA057" #nearest outlet
+  )
+
+site_year |> 
+  filter(site %in% site_focal) |> 
+  mutate(site = factor(site, levels = site_focal)) |> 
+  ggplot(aes(year, lwd_all_per_m2)) +
+  geom_col() +
+  scale_x_continuous(n.breaks = 10, guide = guide_axis(angle = 270)) +
+  facet_wrap(~site, nrow = 4)
+
+```
+
+
+nice to keep raw count and 100m2 areal side by side
+consistent clear nonlinear decline in areal density with bankfull width across streams
+less consistent reln for abs counts, with Mill less wood lower in contrast to slight increase in WTwin
+
+```{r lwd_vs_bankfull_scatter}
+{
+site_year |> 
+  mutate(
+    site = fct_reorder(site, bankfull_width, median, .na_rm = TRUE),
+  ) |> 
+  ggplot(aes(bankfull_width, lwd_all, color = cmplx_strm)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(se = F) +
+  scale_fill_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+    facet_wrap(~strm, ncol = 1) + theme(legend.position = "none")
+}+{
+site_year |> 
+  mutate(
+    site = fct_reorder(site, bankfull_width, median, .na_rm = TRUE),
+    lwd100m2 = 100*lwd_all_per_m2
+  ) |> 
+  ggplot(aes(bankfull_width, lwd100m2, color = cmplx_strm)) +
+    geom_vline(xintercept = c(5,10), linetype = 3, linewidth = 0.7) +
+    geom_hline(yintercept = c(10), linetype = 3, linewidth = 0.7) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(se = F) +
+  scale_fill_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+    facet_wrap(~strm, ncol = 1) + theme(legend.position = "none")
+} +
+    plot_layout(guides = "collect")
+```
+
+change in time...
+
+```{r pointheatmap}
+#range(na.omit(site_year$lwd_all))
+{
+site_year |> 
+  mutate(
+    site = fct_reorder(site, bankfull_width, median, .na_rm = TRUE)
+  ) |> 
+  ggplot(aes(year, site, size = bankfull_width, fill = lwd_all, color = lwd_all)) +
+  geom_point(shape = 15) +
+  wacolors::scale_color_wa_b(palette = "footbridge", reverse = T,
+                             breaks = c(0,50,100,200,300,1000),
+                             aesthetics = c("color","fill"), 
+                             guide = guide_colorsteps(title = "LWD count")) +
+  facet_wrap(~strm, ncol = 1, scales = "free_y") +
+  labs(x = NULL, y = NULL)
+}+{
+site_year |> 
+  mutate(
+    site = fct_reorder(site, bankfull_width, median, .na_rm = TRUE),
+    lwd100m2 = 100*lwd_all_per_m2
+  ) |> 
+  ggplot(aes(year, site, size = bankfull_width, fill = lwd100m2, color = lwd100m2)) +
+  geom_point(shape = 15) +
+  wacolors::scale_color_wa_b("footbridge", reverse = T,
+                             breaks = c(0,5,10,20,30,40),
+                             aesthetics = c("color","fill"),
+                             guide = guide_colorsteps(title = "LWD 100m^2")) +
+    facet_wrap(~strm, ncol = 1, scales = "free_y") +
+  labs(x = NULL, y = NULL)
+} +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title = "Large wood count (a) and areal density per 100m^2 (b) per year 2007-2024 for sites ordered by median bankfull width", tag_levels = "a"
+    )
+```
+
+```{r climateR}
+p <- st_centroid(st_union(sf_edges))
+mapview::mapview(p)
+
+#precip in mm
+climateR::climater_filter("gridmet") |> select(1:6) |> print(n=Inf)
+
+pr_gridmet <- as_tibble(climateR::getGridMET(
+  AOI = p, varname = "pr",
+  startDate = "2006-10-01",
+  endDate = "2024-10-01"
+  )) |> 
+    mutate(
+    y = lubridate::year(date),
+    m = lubridate::month(date), 
+    #yday = lubridate::yday(date)
+    season = case_when(
+      between(m,1,3) ~ "winter",
+      between(m,4,6) ~ "spring",
+      between(m,7,9) ~ "summer",
+      between(m,10,12) ~ "autumn"
+    ),
+    pr_7d_max = slider::slide_dbl(pr, ~max(., na.rm=T), .before = 3, .after = 3),
+    pr_7d_mean = slider::slide_dbl(pr, ~mean(., na.rm=T), .before = 3, .after = 3)
+  )
+
+plotly::plot_ly(data = pr_gridmet, type = "scatter", mode = "points+lines", x = ~date, y = ~pr) |> 
+  plotly::add_trace(y = ~pr_7d_mean)
+
+pr_gridmet |>
+  ggplot(aes(date)) + 
+  #geom_line(aes(y = pr_7d_max)) + geom_point(aes(y = pr), size = 0.3, color = "blue")
+  geom_line(aes(y = pr_7d_mean)) + geom_point(aes(y = pr), size = 0.3, color = "blue")
+
+#SUPERSEDED BY pr_gridmet_wy BUT LEFT FOR NOW
+#focus on Oct-Jun preceding, pseudo water year
+#so '2007' is Oct 2006 - Jun 2007
+pr_wy <- pr_gridmet |> 
+  summarise(
+    across(pr, list(sum = ~sum(.))),
+    .by = c(y, m)
+  ) |>
+  #pivot_wider(names_from = m, values_from = pr_sum)
+  filter(m > 9 | m < 7) |> 
+  mutate(wy = if_else(m > 6, y+1, y)) |> 
+  summarise(pr_sum = sum(pr_sum), .by = wy) |> 
+  filter(wy < 2025)
+
+
+pr_wy <- pr_wy |> 
+  left_join(
+    strm_year |> 
+      select(year, contains("all_per_m2")) # |> ggplot(aes(year, lwd_all_per_m2_mean)) + geom_col()
+    ,
+    by = c("wy" = "year")
+  ) |> 
+  mutate(
+    across(-wy, list(scl = ~as.vector(scale(.))))
+  )
+
+#started out thinking about more wood following bigger flows in wetter years
+#but 2014 and 2019 point to less wood in drier years...
+#2022,23,24 scaled vals all reverse
+#2013,12 scaled wood much stronger
+#2009,10 scaled reverse
+
+pr_wy |> ggplot(aes(wy, pr_sum)) + geom_col()
+pr_wy |> ggplot(aes(wy, lwd_all_per_m2_mean)) + geom_col()
+pr_wy |> ggplot(aes(wy, lwd_all_per_m2_q50)) + geom_col()
+
+pr_wy |> 
+  select(wy, pr_sum_scl, lwd_all_per_m2_mean_scl, lwd_all_per_m2_q50_scl) |> 
+  pivot_longer(-wy) |> 
+  ggplot() + geom_col(aes(wy, value, fill = name), position = position_dodge(width = 0.5))
+
+pr_wy |> 
+#  filter(wy != 2013) |> 
+#  filter(wy != 2013, wy != 2012) |> 
+#  ggplot(aes(pr_sum, lwd_all_per_m2_mean)) +
+  ggplot(aes(pr_sum, lwd_all_per_m2_q50)) +
+  geom_point() +  
+  geom_smooth(se = F, linetype = 2) +  
+  ggpmisc::stat_poly_line() +
+  ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+  geom_text(aes(label = wy))
+  
+#could look for other hydrologic measures?
+
+#higher than avg ppt in July 2013-2015
+pr_gridmet |> 
+  summarise(across(c(pr_7d_max), list(max = ~max(.))), .by = c(y, m)) |> 
+  ggplot(aes(y, pr_7d_max_max, color = m, fill = m)) +
+  geom_col() + 
+  geom_vline(xintercept = 2013) + 
+  geom_hline(yintercept = mean(pr_gridmet$pr_7d_max)) + 
+  facet_wrap(~m)
+
+#threshold effect from Dec 2010 peak, match to summer 2011?
+#responsible for the 11-12-13 increase?
+#but why the drop in 2014?
+#higher than avg Sep 2013 (and Oct) enough to move on? 
+pr_gridmet |> 
+  summarise(across(c(pr_7d_max), list(max = ~max(.))), .by = c(y, m)) |> 
+  filter(m > 9 | m < 7) |> 
+  mutate(wy = if_else(m > 6, y+1, y)) |> 
+  summarise(pr_7d_max_max_max = max(pr_7d_max_max), .by = wy) |> ggplot(aes(wy, pr_7d_max_max_max)) + geom_col()
+
+#need to think clearly about wet/peak - counteracting effects on recruitment vs transport?
+# high flow increases recruitment (more wood) but increases transport (less wood)
+#feels like threshold/morphology effects on competence - expect different sites to behave differently?
+
+#this was going fast and loose but maybe towards interesting?
+#calc pairwise correlation per site against monthly 'overall wetness' and 7d peak
+#maybe meaningless, maybe interesting? almost no abs vals outside 0.4
+#for peaks: across sites the most positive corr in March and most negative in May
+#needs more thinking
+pr_wy_m <- pr_gridmet |> 
+  summarise(
+    across(pr, list(sum = ~sum(.))),
+    across(c(pr_7d_max), list(max = ~max(.))),
+    .by = c(y, m)
+  ) |>
+  filter(m > 9 | m < 7) |> 
+  mutate(
+    wy = if_else(m > 6, y+1, y),
+    m = factor(m, levels = c(10:12,1:6))
+    ) |> 
+  filter(wy != 2025) |> 
+  select(year = wy, m, pr_sum, pr_7d_max_max) 
+
+#wettest single months in record?
+pr_wy_m |> arrange(desc(pr_sum))
+
+#try calc ratio of peak:total? but abs matters, so how to track that? Just focus on 10:3?
+pr_wy_m |> 
+  mutate(`7d:sum` = pr_7d_max_max / pr_sum) |> 
+  mutate(
+    `7d:wy_sum` = pr_7d_max_max / sum(pr_sum), .by = year
+    ) |> 
+  #highlights a few year-months in which peaks were larger than avg proportion of monthly total
+  #eg Oct 2014 has second largest 7d despite smallest total
+  ggplot(aes(factor(m), `7d:sum`, color = year, fill = year)) + geom_col() + facet_wrap(~year)
+
+#weakest correlation between total monthly and peak monthly in Oct, Jan and Mar
+pr_wy_m |> 
+  ggplot(aes(pr_sum, pr_7d_max_max, color = m)) + 
+  ggpmisc::stat_poly_line() +
+  ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+  geom_point() + 
+  geom_text(aes(label = year), size = 3) +
+  facet_wrap(~m, scales = "free")
+
+#most precip has occurred by April
+#March and Dec show greatest total precip wet-dry separation between years 
+{
+# pr_wy_m |> ggplot(aes(m, pr_sum, color = year, group = year)) + geom_line() + geom_point()
+  pr_wy_m |> ggplot() + ggridges::geom_density_ridges(aes(pr_sum, m)) + geom_text(aes(pr_sum, m, label = year), angle = 270, size = 3, position = position_jitter(height = 0.2)) #geom_point(aes(pr_sum, m))
+}+{
+# pr_wy_m |> ggplot(aes(m, pr_7d_max_max, color = year, group = year)) + geom_line() + geom_point()
+  pr_wy_m |> ggplot() + ggridges::geom_density_ridges(aes(pr_7d_max_max, m)) + geom_text(aes(pr_7d_max_max, m, label = year), angle = 270, size = 3, position = position_jitter(height = 0.2)) #geom_point(aes(pr_sum, m))
+}+plot_layout(guides = "collect")
+#Mar and Dec bimodality in total, peaks less so other than Dec
+
+#total precip hi/lo has some pairs/seqs
+#dry: 2008-09, wet: 2016-17
+pr_wy |> arrange(desc(pr_sum)) |> ggplot(aes(pr_sum, fct_reorder(as.character(wy), pr_sum, identity))) + geom_col()
+
+
+#mining for per-month correlations
+site_year |> 
+  filter(str_detect(cmplx_strm, "avis")) |> 
+  left_join(
+    pr_wy_m |> 
+      pivot_wider(names_from = m, values_from = c(pr_sum, pr_7d_max_max))
+    ,
+    by = c("year")
+  ) |> 
+
+  # select(site, year, lwd_all_per_m2, contains("pr_sum")) |>
+  # pivot_longer(cols = contains("pr_sum"), names_to = "foo", values_to = "pr_sum") |>
+  # mutate(m = as.numeric(str_remove(foo, "pr_sum_")), foo = NULL) |> 
+  # #ggplot(aes(pr_sum, lwd_all_per_m2)) + geom_point(size = 0.8) + facet_wrap(~site+m, ncol = 9, scales = "free", labeller = label_wrap_gen(multi_line = F))
+  # summarise(
+  #   k = cor(pr_sum, lwd_all_per_m2, use = "pairwise.complete.obs", method = "kendall"),
+  #   .by = c(site, m)
+  # ) |> 
+  # #pivot_wider(names_from = m, values_from = k) |> print(n = Inf)
+  # ggplot(aes(factor(m), k)) + geom_boxplot() + geom_jitter()
+
+  select(site, year, lwd_all_per_m2, contains("pr_7d")) |>
+  pivot_longer(cols = contains("pr_7d"), names_to = "foo", values_to = "pr_7d_max") |>
+  mutate(m = as.numeric(str_remove(foo, "pr_7d_max_max_")), foo = NULL) |> 
+  summarise(
+    k = cor(pr_7d_max, lwd_all_per_m2, use = "pairwise.complete.obs", method = "kendall"),
+    .by = c(site, m)
+  ) |> 
+  #pivot_wider(names_from = m, values_from = k) |> print(n = Inf)
+  ggplot(aes(factor(m), k)) + 
+  #geom_boxplot() + geom_jitter()
+  geom_line(aes(group = site, colour = site)) -> g; plotly::ggplotly(g)
+
+
+
+#water year cumsum
+pr_gridmet_wy <- pr_gridmet |> 
+  mutate(wy = if_else(m > 9, y+1, y)) |> #count(wy)
+  filter(wy != 2025) |> # ggplot() + stat_ecdf(aes(pr, color = factor(wy)))
+  mutate(
+    wyd = seq_along(wy), 
+    wy_pr_cmsm = cumsum(pr),
+    .by = wy
+    )
+
+
+#compare 100m2~bankfull decay plots to Fox&Bolton ref levels
+#calc wood in terms of avg-abs_change
+#distinguish headwater sites for 'recruitment' focus
+
+site_focal <- c(
+  "STA011","STA070","STA040","STA074","STA107", #upper W branch
+  "STA026","STA008","STA015","STA025","STA022" #upper E branch
+  )
+
+ggplot() +
+  geom_sf(data = sf_edges, color = "lightblue") +
+  geom_sf(data = sf_site_meta, color = "grey30", size = 0.4) +
+  geom_sf_text(data = sf_site_meta |> filter(!(site %in% site_focal)), aes(label = site), size = 2, color = "grey30") +
+  geom_sf_text(data = sf_site_meta |> filter(site %in% site_focal), aes(label = site), size = 2.5) +
+  labs(x = NULL, y = NULL)
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/f_stavis_sites.png", bg = "white")
+
+
+site_year_focal <- site_year |> 
+  mutate(
+    branch = case_when(
+      site %in% c("STA011","STA070","STA040","STA074","STA107") ~ "upr_W",
+      site %in% c("STA026","STA008","STA015","STA025","STA022") ~ "upr_E", 
+      .default = NA
+    )
+    ,
+    site = factor(site, levels = site_focal)
+  ) |> 
+  drop_na(branch) |> #count(brnch, site)
+  select(branch, site, year, up_down_lgth, bankfull_width, lgth_wdth, lwd_all, lwd_all_per_m2, vlwd)
+
+#numerous headwater sites, both branches, show largest 'all' counts in (summer) 2013
+#both branches suggests not localized LU driver
+#and so what happened Oct2012-Jun2013? 
+#and/but why no peak in downstream 074 and 022?
+site_year_focal |> 
+  ggplot() + 
+  geom_col(aes(year, lwd_all)) + 
+  geom_col(aes(year, vlwd), fill = "grey") + 
+  geom_vline(xintercept = 2013, color = "red") +
+  scale_x_continuous("", breaks = 2007:2024, , guide = guide_axis(angle = 270)) + facet_wrap(~site, nrow = 2)
+
+#WY 2013 not unusually wet
+#wyd 244 is either Jun1 or May31, lines up very closely with WY total sum (and wyd 274 Jun30/Jul1)
+pr_gridmet_wy |> filter(wyd == 244) |> arrange(desc(wy_pr_cmsm))
+
+#the drop from 2013 to 2014 could be associated to the small peak ppt in 2014
+#but 2013 wood spike not obvious in ppt
+pr_gridmet_wy |> 
+  select(date, y, m, wy, wyd, starts_with("pr")) |> 
+  mutate(`max:mean` = pr_7d_max / pr_7d_mean) |> 
+  slice_max(order_by = pr, n = 1, by = wy)
+
+#appears there was a 'large for June' week of precip/storm starting ~WYD264
+#but 5mm seems unconvincing
+{pr_gridmet_wy |> ggplot() + geom_line(aes(wyd, wy_pr_cmsm, color = factor(wy))) } |> plotly::ggplotly()
+pr_gridmet_wy |> filter(wyd == 268) |> arrange(desc(pr_7d_mean)) #
+
+#going all the way back to 'hab'
+#note that STA022 in 2013 has up_down_lgth of 105 (vs 300 and 305) so missing tsct could explain lack of peak
+#but otherwise consistent 300s
+#any chance of datasheet errors? seems less likely since spread across classes and different between sites?
+#pattern in 'lwd_all' looks driven by slightly different subclasses between sites
+#W branch 11/70/40 showing atypically high d20_l10 
+#E branch 08/15/25 showing more d10 as well
+#go back to emap??
+hab$lwd_site_year |> 
+  filter(
+    site %in% site_focal,
+    between(year, 2012, 2014)
+    ) |> 
+  mutate(site = factor(site, levels = site_focal)) |> select(-reach_survey_id) |> 
+  arrange(site) |> split(~site)
+  pivot_longer(cols = starts_with("d"), names_to = "d_l", values_to = "count") |> 
+  ggplot() +
+  geom_col(aes(year, count, fill = d_l), position = "dodge") +
+  facet_wrap(~site, nrow = 2)
+
+#abs and pct year to year change 
+site_year_dl1 <- site_year |> 
+  mutate(
+    across(
+      c(lwd_all, vlwd, lwd_all_per_m2, vlwd_per_m2), 
+      list(
+        dl1 = ~. - lag(.)
+        ,
+        dl1_pct = ~(. - lag(.))/lag(.)
+        ))
+    , .by = site
+    ) 
+
+site_year_dl1 |> 
+  select(site, year, lwd_all, vlwd, contains("dl1")) |> 
+  summarise(across(contains("dl1"), ~sum(is.na(.))), .by = site) |> 
+  filter(lwd_all_dl1 > 1) |> arrange(desc(lwd_all_dl1))
+  #filter(site == "STA028") #missing 2008 and 2010 so effectively starts 2012, but also missing 2019 and therefore 2020
+  #filter(site == "STA002") #small site on central trib of W branch, missing 2010 and 2014, so also 2011 and 2015
+  #filter(site == "STA004") #missing 2008 and 2010 so effectively starts 2012
+  #filter(site == "STA035") #same as 004, missing 2008 and 2010 so effectively starts 2012
+
+quantile(pr_gridmet_wy$pr, p = seq(0,95,by=5)/100)
+#2013 does have most days with at least 1" of ppt! tied with 2016
+#2017 and other years have larger single day flows (as seen previously)
+pr_gridmet_wy |> 
+  #filter(pr >= quantile(pr_gridmet_wy$pr, p = 0.9)) |> 
+  filter(pr >= 25.4) |> 
+  summarise(n_days = n(), .by = wy) |> arrange(desc(n_days))
+
+{pr_gridmet_wy |> 
+  select(date, y, m, wy, wyd, starts_with("pr")) |> 
+  ggplot() +
+  #ggridges::geom_density_ridges(aes(pr, factor(wy))) + geom_vline(xintercept = 25.4, linetype = 3)
+  stat_ecdf(aes(pr, color = factor(wy))) + geom_vline(xintercept = 25.4, linetype = 3) + coord_cartesian(ylim = c(0.9,1)) } |> plotly::ggplotly()
+
+#so now testing association of interannual change with number of heavy ppt days
+site_year_dl1 <- site_year_dl1 |> 
+  left_join(
+    pr_gridmet_wy |> 
+      summarise(
+        across(pr, list(
+          n_days_25mm = ~sum(. >= 25),
+          n_days_50mm = ~sum(. >= 50)
+        )), .by = wy) |> arrange(pr_n_days_25mm)
+    ,
+    by = c("year"="wy")
+  )
+
+#especially for mean abs change in vlwd, see 2015:2018 and 2021 seemingly clustered in neg resid?
+#does the season of heavy ppt days matter? what about the intra-annual sequence?
+#go deeper into pos vs neg change at [a] site(s)?
+site_year_dl1 |> 
+  select(site, year, contains("n_days"), lwd_all, vlwd, contains("dl1")) |> 
+  summarise(
+    across(contains("n_days"), ~.[1]),
+    across(contains("dl1"), ~mean(abs(na.omit(.))))
+    , .by = year) |> 
+  ggplot(aes(pr_n_days_25mm, lwd_all_dl1)) + geom_point() + geom_text(aes(label = year))
+  #ggplot(aes(pr_n_days_25mm, lwd_all_dl1_pct)) + geom_point()
+  ggplot(aes(pr_n_days_25mm, vlwd_dl1)) + geom_point() + geom_text(aes(label = year))
+  
+pr_gridmet_wy |> 
+  summarise(
+    across(pr, list(
+      n_days_25mm = ~sum(. >= 25)
+    )), .by = c(wy,m)) |> 
+  mutate(m = factor(m, levels = c(10:12,1:9))) |> 
+  ggplot(aes(factor(m), pr_n_days_25mm, fill = wy)) + geom_col(show.legend = F) + facet_wrap(~wy, ncol = 6)
+
+#other way to look - rather than mean across sites per year, could examine per-site corr as above
+site_year_dl1 |> 
+  #select(site, year, pr_n_days_25mm, lwd = lwd_all_dl1_pct) |> 
+  #select(site, year, pr_n_days_25mm, lwd = vlwd_dl1_pct) |> 
+  select(site, year, pr_n_days_25mm, lwd = lwd_all_per_m2_dl1) |> 
+  summarise(
+    k = cor(pr_n_days_25mm, lwd, use = "pairwise.complete", method = "kendall"),
+    .by = site
+  ) |> arrange(desc(k)) |> print(n=Inf)
+
+#current takeaways: large wood abundance, density and change in both do not show simple relationship to patterns of (heavy) precip
+#various weak and possibly spurious
+#but need to reformulate some testable hypotheses and re-test - talk to Will D about 'what happened' then see if data support
+```
+
+# render from this chunk 
+
+- temporal: test larger magnitude shifts (positive or both?) shifts against precip (overall wetness, peak flow, n-days over 25.4)
+- spatial: reassociate to nhdphr for DA rather than bankfull...avoids using a term in the response as a pred
+  - refit SSN for lwd_class-m2 responses; keep DA and upArea?
+
+```{r lwdsy}
+#### QAQC/properties of counts by size classes
+#appreciably different 'small' group 10_10,10_20,20_10,20_20
+#arguable a 'mid' group of 10_30,20_30,30_10,30_20
+#leaving 'big' group of 30_30,40_10,40_20,40_30
+lwdsy <- hab$lwd_site_year |> 
+  select(-reach_survey_id, -contains("per100"), -contains("per_m2")) |> 
+  filter(str_detect(strm, "Stavis|Mill|West")) |> #summary()
+  pivot_longer(cols = starts_with("d"), names_to = "dl", values_to = "n") 
+lwdsy$n |> fivenum()
+
+# # #prettier/richer and/but less simple
+# lwdsy |> ggplot() + scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+#   ggridges::geom_density_ridges(
+#     aes(n, dl, fill = strm), alpha = 0.4, linewidth = 0.2,
+#     stat = "binline", binwidth = 1,
+#     ) #+ facet_wrap(~strm)
+
+{
+#boxes by stream
+lwdsy |> ggplot() + scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_boxplot(aes(dl, n, fill = strm), linewidth = 0.3, color = "grey", outlier.size = 0.5) +
+  labs(x = NULL, title = "Reference stream distributions of site-year LWD counts by diameter and length class") +
+    theme(legend.position = "top")
+}+{
+#boxes no stratification by stream
+lwdsy |> ggplot() + 
+  geom_boxplot(aes(dl, n), linewidth = 0.5, color = "grey30", outlier.size = 0.5) +
+    geom_text(data = summarise(lwdsy, n_q75 = quantile(n, p = 0.75, na.rm = T), .by = dl),
+              aes(dl, label = n_q75), y = 200) + #label = paste0("q75: ", n_q75)
+  labs(x = "LWD size class", subtitle = "75th quantile values in black")
+}+ 
+  plot_layout(ncol = 1)
+
+# #boxes, mid and large only
+# lwdsy |> 
+#   filter(str_detect(dl, "d10_l10|d10_l20|d20_l10|d20_l20", negate = T)) |> 
+#   filter(n < 100) |> #drop DEW147 in 2012 as d10_l30 outlier at n=129
+#   ggplot() + 
+#   # stat_ecdf(aes(n, color = dl)) #confirming clear separation at q75, n = 1 or 2
+#   geom_boxplot(aes(dl, n), color = "grey") +
+#   labs(x = "LWD size class", title = "Reference stream distributions of site-year LWD counts by diameter and length class")
+
+
+#q75 separates m/l
+lwd_class <- lwdsy |>
+  summarise(
+    across(n, list(
+      q50 = ~median(., na.rm = T),
+      q75 = ~quantile(., p = 0.75, na.rm = T)
+      )), 
+    .by = c(dl)
+    ) |> 
+  arrange(desc(n_q75)) |> 
+  mutate(lwd_class = rep(c("S","M","L"), each = 4) |> factor(levels = c("S","M","L"))) |> 
+  select(dl, lwd_class)
+
+
+#join and aggregrate by S/M/L classes
+lwdsy <- lwdsy |> 
+  left_join(lwd_class, by = "dl") |>
+  summarise(
+    across(c(up_down_lgth, bnk_wdth_mean, lgth_wdth), ~.[1]),
+    across(n, sum),
+    .by = c(strm, site, year, lwd_class)
+  )
+
+# #not helpful
+# lwdsy |> 
+#   split(~strm, drop = T) |> 
+#   map(~.x |> ggplot(aes(year, n, fill = lwd_class)) + geom_col() + facet_wrap(~site, ncol = 1) + labs(x = NULL, y = NULL)) |> 
+#   wrap_plots(ncol = 3, guides = "collect")
+
+#### temporal [dynamics]
+#good/keep. appears to depict testable hydroclimate effect on recruitment/transport, esp as pulses in M&L later in series
+lwdsy |> 
+  ggplot(aes(year, n, color = strm, group = site)) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_line(linewidth = 0.5, alpha = 0.5, show.legend = F) +
+  ##linewidth scaled to site size is okay just hard to see and arguably too much info
+  #geom_line(aes(linewidth = bnk_wdth_mean), alpha = 0.5, show.legend = F) + scale_linewidth_binned(range = c(0.3, 1.5), breaks = c(0,5,10,15,20)) +
+  scale_x_continuous(name = NULL, breaks = seq(2007,2024,by=2)) +
+  facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F)) +
+  labs(y = "Piece count", title = "Reference stream large wood dynamics, site-reach counts as lines",
+       subtitle = summarise(lwd_class, dl = paste(dl, collapse = "; "), .by = lwd_class) |> 
+         unite("l", lwd_class, dl, sep = ": ") |> pull(l) |> paste(collapse = ",   "))
+
+#next - test larger magnitude shifts (positive or both?) shifts against precip (overall wetness, peak flow, n-days over 25.4)
+
+
+#### spatial [pattern]
+
+#raw counts show little relationship to site-reach width as proxy of network position
+lwdsy |> 
+  ggplot(aes(bnk_wdth_mean, n, color = strm)) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_point(size = 0.3, alpha = 0.6, show.legend = F) +
+  #ggpmisc::stat_poly_line(color = "blue") +
+  ggpmisc::stat_poly_line(formula = y ~ poly(x, degree = 3, raw = T), color = "red", se = F) +
+  #ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+  ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2")), formula = y ~ poly(x, degree = 3, raw = T), color = "red", ) +
+  #facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F))
+  facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F), scale = "free_y")
+
+#whereas normalizing by site-reach bankfull width shows consistent decline in areal density across streams and, to a lesser degree, size classes
+#the survey protocol increases longitudinal transect spacing with greater bankfull width, such that a larger area is observed 
+#but if density were constant, raw counts would increase with bankfull (as larger observed area meant more wood encountered)
+#and STA has very few site-reaches outside the 300m survey length (see below QAQC)
+lwdsy |> 
+  mutate(n_100m2 = 100 * (n / lgth_wdth)) |> 
+  ggplot(aes(bnk_wdth_mean, n_100m2, color = strm)) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_point(size = 0.3, alpha = 0.6, show.legend = F) +
+  #ggpmisc::stat_poly_line(color = "blue") +
+  ggpmisc::stat_poly_line(formula = y ~ poly(x, degree = 3, raw = T), color = "red", se = F) +
+  #ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+  ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2")), formula = y ~ poly(x, degree = 3, raw = T), color = "red", ) +
+  #facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F))
+  facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F), scale = "free_y")
+
+#summarized across years per site...
+lwdsy |> 
+  mutate(n_100m2 = 100 * (n / lgth_wdth)) |> 
+  summarise(
+    across(c(bnk_wdth_mean, n, n_100m2), ~mean(., na.rm = T)), .by = c(strm, site, lwd_class)
+  ) |> 
+  pivot_longer(cols = starts_with("n")) |> 
+  ggplot(aes(bnk_wdth_mean, value, color = strm, shape = strm)) + 
+  scale_color_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_point(size = 0.8, alpha = 0.9, show.legend = T) +
+  guides(fill = guide_none()) +
+  facet_wrap(~name+lwd_class, labeller = label_wrap_gen(multi_line = F), scale = "free_y")
+
+#next - reassociate to nhdphr for DA rather than bankfull...avoids using a term in the response as a pred
+
+
+#### QAQC/properties of denominator on areal density
+# more?
+hab$lwd_site_year |> 
+  filter(str_detect(strm, "Stavis|Mill|West")) |> 
+  summarise(
+    n = length(up_down_lgth), #n2 = n(),
+    undr_280 = sum(up_down_lgth < 280),
+    over_320 = sum(up_down_lgth > 320),
+    across(c(up_down_lgth, bnk_wdth_mean, lgth_wdth), 
+           list(
+             min = ~min(.,na.rm = T),
+             med = ~median(.,na.rm = T),
+             max = ~max(.,na.rm = T)
+           )),
+    .by = strm)
+
+hab$lwd_site_year |> 
+  filter(str_detect(strm, "Stavis|Mill|West")) |> 
+  ggplot(aes(bnk_wdth_mean, lgth_wdth, color = strm, label = paste0(site,year))) +
+  geom_vline(xintercept = 10, linetype = 3) +
+  geom_point() +
+  facet_wrap(~strm)
+
+```
+
+```{r more_pr_gridmet_wy}
+#no dice on dependencies: devtools::install_github("AckerDWM/gg3D")
+#could try 'plot3d'
+
+#pretty nice but apparently a bug that area under line cannot be filled
+plotly::plot_ly(
+  data = pr_gridmet_wy, type = "scatter3d",
+  mode = "lines",
+  x = ~wyd, y = ~wy, z = ~pr, name = ~wy,
+  color = ~pr
+)
+
+#cool but hard to get 'just right'?
+pr_gridmet_wy |>
+  #ggplot(aes(wyd, pr, group = wy, color = wy)) + geom_line(linewidth = 0.5, alpha = 0.5)
+  ggplot(aes(wyd, wy, height = pr, group = wy)) + 
+  ggridges::geom_ridgeline(
+    #aes(fill = wy, color = wy), 
+    fill = "darkblue",
+    #scale = 0.1, 
+    scale = 0.05, 
+    alpha = 0.7, linewidth = 0.1,
+    show.legend = F) +
+  scale_y_continuous(breaks = 2007:2024)
+
+#simpler is better?
+pr_gridmet_wy |>
+  ggplot(aes(wyd, wy, size = pr, alpha = pr)) +
+  geom_point() +
+  scale_size_area()
+```
+
+```{r sf_nhdp_wa, eval=FALSE}
+# #med res NHDplus, 230K polys including non-WA, no attrib but FEATUREID==COMID for StreamCat join
+# sf_nhdp <- sf::read_sf(file.path(dir_data_common, "NHDPlus17/NHDPlusCatchment/Catchment.shp")) |>
+#   sf::st_transform(crs = sf::st_crs(epsg)) |>
+#   select(COMID = FEATUREID, areasqkm = AreaSqKM)
+# 
+# #use StreamCat for WA to nonspatially subset catchment polys
+# sf_nhdp_wa <- inner_join(
+#   sf_nhdp |> mutate(comid = as.character(COMID))
+#   ,
+#   StreamCatTools::sc_nlcd(state = "WA", year = "2019", aoi = 'riparian_watershed') |>
+#     rename_with(tolower) |> as_tibble() |>
+#     mutate(comid = as.character(comid)) |> 
+#     select(comid, state)
+#   ,
+#   by = "comid")
+# 
+# saveRDS(sf_nhdp_wa, "~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/sf_nhdp_wa.rds")
+
+sf_nhdp_wa <- readRDS("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/sf_nhdp_wa.rds")
+```
+
+```{r nwm3}
+#long chunk 'nwm_zarr_pull3' 
+#https://github.com/daauerbach/test_nwm_3dhp/blob/main/test_nwm_3dhp.qmd
+#https://github.com/daauerbach/test_nwm_3dhp/blob/600ca0ef07573f775a3f2079e5a0d0ef584e720b/test_nwm_3dhp.qmd#L1499
+#ended up using for() loop on nwm3_hacky_ym.R
+#pulled-wrangled WA statewide day-by-COMID at 13:00, per year-month objects
+
+
+#get comids, can also use nhdplusTools::discover_nhdplus_id(sf_site_meta[1,])
+sf_site_nhdp <- sf_nhdp_wa[sf_site_meta,] |> select(-state)
+site_comid <- sf_site_meta |> 
+  st_join(sf_site_nhdp) |> 
+  as_tibble() |> select(strm, site, comid) 
+site_comid |> count(comid)
+rm(sf_nhdp_wa)
+
+#reduce to water years 2000 (missing 1999 Oct-Dec) and 2023 (missing 2023 Jan-Sep)
+#takes a few but not terrible
+nwm <- expand_grid(y = 2000:2022, m = 1:12) |> 
+  mutate(wy = if_else(m > 9, y+1, y)) |>
+  filter(between(wy, 2001, 2022)) |> 
+  mutate(
+    nwm = map2(y, m,
+      ~readRDS(paste0("~/T/DFW-Team WDFW Watershed Synthesis - data_common/nwm_retro/v3_0/nwm_wa_",.x,"_",str_pad(.y,2,pad = "0"),".rds"))[,unique(site_comid$comid)]
+      )
+  ) |> 
+  unnest(nwm) |> 
+  mutate(d = seq_along(m), .by = c(y,m)) |> 
+  pivot_longer(cols = -c(y,m,wy,d), names_to = "comid", values_to = "cfs")
+
+#attached summarized daily vals per water year to catchment polys
+sf_site_nhdp_nwm <- sf_site_nhdp |> 
+  left_join(
+    nwm |> summarise(across(cfs, list(q50 = ~median(.), q90 = ~quantile(.,p=0.9), max = ~max(.))), .by = c(comid, wy))
+    , by = "comid"
+  )
+
+# spatially: the model puts much less flow in the W branch
+#908 (upper W branch with 011,070,040) and 902 (lower W branch adding 002,074,107,028)
+ggplot() + 
+  geom_sf(data = sf_site_nhdp, alpha = 0.5) + 
+  geom_sf(data = sf_edges, color = "lightblue") + 
+  geom_sf_text(data = sf_site_meta, aes(label = site)) + 
+  geom_sf_text(data = sf_site_nhdp, aes(label = comid), color = "blue", size = 6) +
+  labs(x = NULL, y = NULL)
+
+#nice looking but arguably not that helpful  
+{ggplot(sf_site_nhdp_nwm) + geom_sf(aes(fill = cfs_q50)) + facet_grid(~factor(wy)) + wacolors::scale_fill_wa_c("sea", reverse = T) + theme(axis.text = element_blank()) + labs(subtitle = "WY median cfs")} + 
+{ggplot(sf_site_nhdp_nwm) + geom_sf(aes(fill = cfs_q90)) + facet_grid(~factor(wy)) + wacolors::scale_fill_wa_c("sea", reverse = T) + theme(axis.text = element_blank()) + labs(subtitle = "WY Q90 cfs")} + 
+{ggplot(sf_site_nhdp_nwm) + geom_sf(aes(fill = cfs_max)) + facet_grid(~factor(wy)) + wacolors::scale_fill_wa_c("sea", reverse = T) + theme(axis.text = element_blank()) + labs(subtitle = "WY max cfs")} + 
+  plot_layout(ncol = 1)
+
+#908 has 0cfs q90 in 2008
+as_tibble(sf_site_nhdp_nwm) |> select(comid, wy, starts_with("cfs")) |> slice_max(order_by = cfs_max, n = 1, by = comid)
+as_tibble(sf_site_nhdp_nwm) |> select(comid, wy, starts_with("cfs")) |> slice_max(order_by = cfs_q90, n = 1, by = comid)
+#across wateryears, positive but definitely not perfectly linear reln between q90 and max, 2008
+as_tibble(sf_site_nhdp_nwm) |> select(comid, wy, starts_with("cfs")) |> 
+  GGally::ggpairs(columns = 3:5, mapping = aes(color = comid, alpha = 0.7))
+#is 2008 an error? gridmet precip does not suggest order of magnitude larger flow
+#check BBC gage for Dec03 2007?
+nwm |> slice_max(cfs, n = 1, by = comid)
+
+{
+as_tibble(sf_site_nhdp_nwm) |> 
+  select(comid, wy, starts_with("cfs")) |>
+  pivot_longer(starts_with("cfs")) |> 
+    mutate(name = factor(name, levels = c("cfs_q50","cfs_q90","cfs_max"))) |>  
+  filter(wy != 2008) |> 
+  ggplot(aes(wy, value, color = comid)) + 
+  geom_line() + 
+  scale_x_continuous(name = NULL, breaks = seq(2000,2024,by=2), limits = c(2001,2024)) +
+  facet_wrap(~name, scale = "free_y", ncol = 1) +
+  labs(x = NULL, y = NULL, title = "NWM3.0 estimated flow stats per water year",
+       subtitle = "colors show NHDplusMR stream sections; note y-axis scale differences") +
+  theme(legend.position = "top")
+} / {
+lwdsy |> 
+  filter(str_detect(strm, "Stavis")) |> 
+  ggplot(aes(year, n, color = strm, group = site)) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_line(linewidth = 0.5, alpha = 0.5, show.legend = F) +
+  scale_x_continuous(name = NULL, breaks = seq(2000,2024,by=2), limits = c(2001,2024)) +
+  facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F), ncol = 1, scale = "free_y") +
+  labs(y = "Piece count", title = "Reference stream large wood dynamics, site-reach counts as lines",
+       subtitle = summarise(lwd_class, dl = paste(dl, collapse = "; "), .by = lwd_class) |> 
+         unite("l", lwd_class, dl, sep = ": ") |> pull(l) |> paste(collapse = ",   "))
+}
+#ggsave("f_stavis_lwd_by_class_nwm_med90max.png", height = 11, width = 9, bg = "white")
+
+
+plotly::plot_ly(
+  data = nwm |> filter(comid=="24287878") |> mutate(wyd = seq_along(wy), .by = wy) |> filter(wy != 2008)
+  , 
+  type = "scatter3d", mode = "lines",
+  x = ~wyd, y = ~wy, z = ~cfs, name = ~wy,
+  color = ~cfs
+)
+
+
+
+lwdsy_nwm <- lwdsy |> 
+  inner_join(
+    site_comid |> 
+      left_join(
+        nwm |> 
+          summarise(
+            across(cfs, list(
+              q90 = ~quantile(.,p=0.9)
+              #, max = ~max(.)
+            )),
+            .by = c(comid, wy)
+          ) |> 
+          pivot_wider(names_from = wy, values_from = starts_with("cfs"))
+        ,
+        by = "comid"
+      ) |> 
+      pivot_longer(cols = `2001`:`2022`, names_to = 'year', values_to = 'cfs_q90') |> 
+      mutate(year = as.integer(year))
+    , 
+    by = c("strm","site","year")
+  ) |> 
+  select(strm, comid, site, year, lwd_class, everything()) |> 
+  arrange(strm, site, year) |> 
+  mutate(
+    across(
+      c(n, cfs_q90),
+      list(
+        dl1 = ~(. - lag(.))
+        ,
+        dl1_pct = ~(. - lag(.))/lag(.)
+        ))
+    , .by = c(site, lwd_class)
+  )
+
+#this seems to show that 'typical' change depends on wood size class, network location, and 'hydrologic direction' (increase or decrease from previous)
+#think i prefer lag1diffs of q90 in cfs not pct units
+#and same for wood counts by lwd_class
+lwdsy_nwm |> 
+  filter(
+    comid != "24287908",
+    is.finite(n_dl1_pct)
+    ) |> 
+  ggplot() + 
+  geom_hline(yintercept = 0) + geom_vline(xintercept = 0) +
+#  geom_point(aes(cfs_q90_dl1_pct, n_dl1_pct, color = lwd_class), alpha = 0.6) +
+#  geom_point(aes(cfs_q90_dl1_pct, n_dl1, color = lwd_class), alpha = 0.6) +
+#  geom_smooth(aes(cfs_q90_dl1_pct, n_dl1, color = lwd_class), alpha = 0.6) +
+  geom_point(aes(cfs_q90_dl1, n_dl1, color = lwd_class), alpha = 0.6, show.legend = F) +
+  geom_smooth(aes(cfs_q90_dl1, n_dl1, color = lwd_class), alpha = 0.6, show.legend = F) +
+#  facet_wrap(~lwd_class + comid, nrow = 3, scale = "free_y")
+#harder to see:  facet_wrap(~comid, nrow = 3, scale = "free")
+  facet_wrap(~lwd_class + comid, nrow = 3, scale = "free") +
+  labs(title = "Interannual difference in LWD count vs difference in Q90",
+       subtitle = "x < 0: smaller high flow, x > 0: larger; y < 0: smaller wood count, y > 0: larger count")
+
+
+#so 'ccf' turns out to have some [known] nuance, esp in comparison to 'cor'
+#https://medium.com/@jan.seifert/the-r-cross-correlation-function-f5f426006425
+#and "So acf demeans only once in the very beginning and uses that for normalization throughout, whereas cor would normalize and demean separately for each lag."
+#from https://stackoverflow.com/questions/16399788/why-do-i-get-different-results-using-ccf-and-cor-in-r
+#and: https://www.stat.math.ethz.ch/pipermail/r-help/2024-January/478794.html
+#but (as usual) ATSA has good treatment: https://atsa-es.github.io/atsa-labs/sec-tslab-correlation-within-and-among-time-series.html
+#and/but lag-0 results are equivalent
+#and the test of lag-0 is what's of interest for hypothesis of 'do the series evolve concurrently' given that the flow measure intra-annually 'leads' the wood within-the-water-year
+
+
+#pooled site pearson cor for count and Q90 and for lag1-differenced
+#differenced looks tolerably close to normal...
+lwdsy_nwm |> 
+  #GGally::ggpairs(columns = 9:10, aes(color = lwd_class, fill = lwd_class, alpha = 0.3))
+  GGally::ggpairs(columns = c(11,13), aes(color = lwd_class, fill = lwd_class, alpha = 0.3))
+
+#stratifying to per-site series direct correlation between lwd-measure ~ Q
+lwdsy_nwm_site_cor <- lwdsy_nwm |> 
+  summarise(
+    #arguably inappropriate to pearson on non-differenced due to non-norm?
+#    r = cor(cfs_q90, n, use = "pairwise.complete", method = "pearson"), #checked as equivalent: ccf = ccf(cfs_q90, n, lag.max = 0, plot = F)$acf[1,1,1]
+    ktau = cor(cfs_q90, n, use = "pairwise.complete", method = "kendall"), 
+    dl1_r = cor(cfs_q90_dl1, n_dl1, use = "pairwise.complete", method = "pearson"), 
+    dl1_ktau = cor(cfs_q90_dl1, n_dl1, use = "pairwise.complete", method = "kendall") 
+    ,
+    .by = c(strm, site, lwd_class)
+  )
+
+{
+lwdsy_nwm_site_cor |> 
+  ggplot(aes(lwd_class, ktau)) + geom_boxplot(outliers = F, notch = T) + 
+  geom_jitter(size = 0.7, width = 0.3) + geom_hline(yintercept = 0) + 
+  labs(title = "Per-site Kendall tau of wood count and high flow by size class (n ~ q90 | {S,M,L}")
+}/{
+  lwdsy_nwm_site_cor |>
+  ggplot(aes(lwd_class, dl1_ktau)) + geom_boxplot(outliers = F, notch = T) + 
+  geom_jitter(size = 0.7, width = 0.3) + geom_hline(yintercept = 0) + 
+  labs(title = "Per-site Kendall tau of year-year differenced wood count and high flow by size class: n_dl1 ~ q90_dl1 | {S,M,L}")
+}
+
+```
+
