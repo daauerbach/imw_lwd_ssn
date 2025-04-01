@@ -16,6 +16,7 @@ format:
 ---
 
 
+
 emailed:
   1. [How] Does network/riverscape position affect temporal variation in wood density? (this follows from past reflections from Kirk and Will) and
   2. [How] Are changes in wood density followed by changes in other measures of habitat form? (this follows from past comments from Joe) and
@@ -2181,7 +2182,7 @@ map(ssn_vlwd_cv,
 
 ```
 
-```{r rf_cv}
+```{r ssn_obs}
 ssn_obs <- map(
   ssns, 
   ~as_tibble(.x$obs) |> 
@@ -2192,10 +2193,13 @@ ssn_obs <- map(
     ) |> 
     select(
       cmplx_abrv, cmplx_desc, cmplx_strm, strm, NHDPlusID, site,
+      bankfull_width_mean,
       starts_with("vlwd"), lon, lat, dasqkm_tot, elev_min, slope, upDist, afvArea
       )
 )
+```
 
+```{r rf_cv}
 rf_cv <- map(
   ssn_obs,
   \(df) {
@@ -2216,7 +2220,75 @@ map(rf_cv, ~.x |> vip::vi() |> mutate(cmplx_strm = .x$cmplx_strm))
 map(rf_cv, ~.x |> vip::vip(geom = "point") + labs(subtitle = .x$cmplx_strm)) |> 
   wrap_plots()
   
+```
 
+
+
+```{r ssn_bank_mean}
+#reference streams
+ssn_bank_mean <- map(
+  ssns[c(3,7,9)]
+  ,
+  ~fit_ssn_glm(.x, lhs = "bankfull_width_mean", rhs = "dasqkm_tot + elev_min + slope")
+  )
+ssn_bank_mean_noDA <- map(
+  ssns[c(3,7,9)]
+  ,
+  ~fit_ssn_glm(.x, lhs = "bankfull_width_mean", rhs = "elev_min + slope")
+  )
+
+#clearly strong fits: good pseudoR2, signif preds in all 3
+map(ssn_bank_mean, summary)
+map(ssn_bank_mean, ~broom::glance(.x) |> mutate(strm = .x$ssn.object$obs$strm[1])) |> 
+  bind_rows() |> arrange(pseudo.r.squared)
+map(ssn_bank_mean, ~broom::tidy(.x, conf.int = T) |> mutate(strm = .x$ssn.object$obs$strm[1])) |> 
+  bind_rows() |> 
+  filter(p.value < 0.1, term != "(Intercept)")
+
+map(ssn_bank_mean, loocv)
+map(ssn_bank_mean_noDA, loocv) #largely similar, RMSPE worse in Mill & Stavis, slightly better WTwin 
+
+
+
+#conditional inference trees
+cit_bnk <- map(
+  ssn_obs[c(3,7,9)],
+  \(df){
+    d <- df |> select(bankfull_width_mean, lon, lat, dasqkm_tot, elev_min, slope, upDist
+                      #, afvArea
+                      )
+    ct <- party::ctree(
+      bankfull_width_mean ~ ., data = d,
+      controls = party::ctree_control(testtype = "Univariate", minsplit = 3, minbucket = 3)
+      )
+    return(list(ct = ct, strm = df$strm[1]))
+  }
+) 
+
+cit_bnk |> map(\(ct) {plot(ct$ct, main = ct$strm)})
+tibble(
+ssn = ssn_bank_mean$`170800030605_Mill_55000300323139` |> fitted()
+,
+cit = cit_bnk$`170800030605_Mill_55000300323139`$ct |>predict()
+)
+
+
+```
+
+```{r ssn_vlwd_mean}
+#reference streams
+ssn_vlwd_mean <- map(
+  ssns[c(3,7,9)]
+  ,
+  ~fit_ssn_glm(.x, lhs = "vlwd_per100_mean", rhs = "dasqkm_tot + elev_min + slope")
+  )
+
+map(ssn_vlwd_mean, summary)
+map(ssn_vlwd_mean, ~broom::glance(.x) |> mutate(strm = .x$ssn.object$obs$strm[1])) |> 
+  bind_rows() |> arrange(pseudo.r.squared)
+map(ssn_vlwd_mean, ~broom::tidy(.x, conf.int = T) |> mutate(strm = .x$ssn.object$obs$strm[1]))  |> 
+  bind_rows() |> 
+  filter(p.value < 0.1, term != "(Intercept)")
 
 #conditional inference trees for mean density
 map(
@@ -2235,6 +2307,8 @@ map(
 
 ```
 
+### ref only
+
 main takeaway: more cleaning and checking to ensure wood counts are valid and sites are assigned to correct reach...
 MIL015 appears assigned wrong DA based on wider bankfull than MIL020
 DEW695 has small DA, large bankfull
@@ -2245,7 +2319,8 @@ map(
   c("West","Stavis","Mill")
   ,
   ~ggplot() +
-    geom_sf(data = filter(sf_ssn_edges, str_detect(cmplx_strm, .x)), aes(color = strm), linewidth = 0.5) +
+    geom_sf(data = filter(sf_ssn_edges, str_detect(cmplx_strm, .x)),
+            aes(color = strm, linewidth = dasqkm_tot)) +
     geom_sf(
       data = filter(sf_ssn_sites, str_detect(cmplx_strm, .x)) |> 
         filter(
@@ -2253,14 +2328,19 @@ map(
         ) |> 
         mutate(vlwd_per100_cv = vlwd_per100_sd / vlwd_per100_mean)
       , 
-      aes(size = vlwd_per100_mean, fill = strm, alpha = vlwd_per100_mean),
+      aes(size = vlwd_per100_mean, fill = strm
+          #, alpha = vlwd_per100_mean
+          ),
       shape = 24, color = "black",
       ) +
+    scale_linewidth(limits = c(0,80)) +
+    scale_size_binned_area(limits = c(0,25)) +
+    scale_alpha(limits = c(0,25)) +
     scale_color_manual(values = pal_strm, aesthetics = c("color","fill")) +
     ggspatial::annotation_scale() +
     theme(axis.text = element_blank())
   ) |> 
-  wrap_plots()
+  wrap_plots(guides = "collect")
 
 
 ssn_sites_ref <- ssn_sites |> 
@@ -2282,7 +2362,7 @@ ssn_sites_ref <- ssn_sites |>
          ) 
 
 ssn_sites_ref |>
-  filter(slope <= 0.1) |> 
+  #filter(slope <= 0.1) |> 
   GGally::ggpairs(
     mapping = aes(color = cmplx_strm, alpha = 0.8),
     columns = c(3:9),
@@ -2341,6 +2421,33 @@ site_year |>
 {ssn_sites_ref |> 
   ggplot(aes(dasqkm_tot, bankfull_width_mean, color = cmplx_strm, label = site)) + geom_point() + scale_color_manual(values = pal_cmplx_strm)
 } |> plotly::ggplotly()
+
+
+#heatmap of survey lengths
+site_year |> 
+  filter(str_detect(strm, "West|Stavis|Mill")) |> 
+  filter(!(site == "DEW016" & year == 2008)) |> 
+  #left_join(ssn_sites |> select(site, dasqkm_tot, slope), by = "site") |> 
+  ggplot() +
+  geom_tile(aes(year, fct_rev(site), fill = tot_srvy_lgth)) +
+  geom_text(aes(year, fct_rev(site), label = round(tot_srvy_lgth)), size = 2.5) +
+  scale_fill_fermenter(type = "div", breaks = c(0,270,330,700), palette = "PuOr") +
+  facet_wrap(~cmplx_strm, scales = "free_y") +
+  labs(x = NULL, y = NULL)
+
+  # split(~cmplx_strm, drop = T) |> 
+  # lapply(
+  #   \(d){
+  #     plotly::plot_ly(d,
+  #                     type = "bar",
+  #                     name = ~site,
+  #                     x = ~year, 
+  #                     y = ~vlwd_per100
+  #                     #,color = ~cmplx_strm
+  #     )}
+  # ) |> 
+  # plotly::subplot(nrows = 3)
+
 
 ```
 
@@ -2569,6 +2676,136 @@ rand_forest(
 
 ```
 
+## HRCD
+
+```{r hrcd_intersection}
+gdb <- file.path(dir_data_common, "HRCD.gdb") #also NAD83(HARN)
+sf::st_layers(gdb)
+hrcd <- sf::st_read(gdb, layer = "HRCD_ChangeLocations") |> #~4gb
+  tibble::rowid_to_column("uid")
+#subset to anthropogenic change polys with non-zero tree loss
+hrcd_anth_loss <- hrcd |> 
+  filter(
+    CngOrigin != "Natural",
+    TreeDecAc > 0
+  ) |> 
+  select(uid, StartYr, EndYr, TreeDecPct, CngOrigin, CngAgentNm, TreeDecAc, Shape)
+
+#could also get 'whole-stream' HRCD from HUC12s...
+#start here with intersection against (buffered?) lines
+#union by stream
+sf_ssn_edges_strm <- sf_ssn_edges |> group_by(cmplx_strm) |> summarise() 
+#then intersect change polys, duplicating if/when multiple streams
+sf_ssn_edges_strm_hrcd <- sf_ssn_edges_strm |> 
+  st_join(
+    hrcd_anth_loss
+  )
+sf_ssn_edges_strm_300_hrcd <- sf_ssn_edges_strm |> 
+  st_buffer(300) |> 
+  st_join(
+    hrcd_anth_loss
+  )
+
+### for unbuffered:
+#only 2 change polys that intersect 2 streams
+#but looks like only 2015-2017 commonly present across complexes
+#LC has newer (end 19, 21) but not older polys (end 09, 11, 13, 15)
+### for 300ft buffered:
+#17 change polys associated to 2 streams (none more than 2 streams tho)
+#same time stanzas, so constraint to 15-17 is appropriate for cross complex comparison
+as_tibble(sf_ssn_edges_strm_hrcd) |> 
+as_tibble(sf_ssn_edges_strm_300_hrcd) |> 
+  #count(uid) |> arrange(desc(n)) |> filter(n>1)
+  #count(cmplx_strm, EndYr) |> pivot_wider(names_from = EndYr, values_from = n)
+  filter(EndYr == 2017) |> 
+  #count(cmplx_strm, StartYr)
+  summarise(
+    across(TreeDecAc, sum), .by = c(cmplx_strm, CngAgentNm)
+  ) |> 
+  pivot_wider(names_from = CngAgentNm, values_from = TreeDecAc)
+
+#intersect HRCD with (buffered) line by feature does not explictly account for 'watershed' routing, only 'catchment'
+#starting with 300ft for the linestrings with associated sites...
+#not all reaches/sites have any HRCD intersection even at 300ft
+sf_ssn_edges_sites_300_hrcd <- sf_ssn_edges |> 
+  semi_join(
+    as_tibble(sf_ssn_sites), by = "NHDPlusID"
+  ) |> 
+  st_buffer(300) |> 
+  st_join(
+    hrcd_anth_loss |> 
+      filter(EndYr == 2017)
+  )  
+
+as_tibble(sf_ssn_edges_sites_300_hrcd) |> 
+  filter(EndYr == 2017) |> #also drops non-intersected reaches/sites
+  summarise(
+    across(TreeDecAc, sum), 
+    .by = c(cmplx_strm, NHDPlusID, CngAgentNm)
+  ) |> 
+  pivot_wider(names_from = CngAgentNm, values_from = TreeDecAc)
+
+#somewhat helpful overlaid on imagery
+mapview::mapview(sf_ssn_edges, zcol = "dasqkm_tot", color =  \(n){ grDevices::hcl.colors(n, palette = "Blues", rev = T) }) +
+mapview::mapview(sf_ssn_sites, zcol = "vlwd_per100_mean", col.regions =  \(n){ grDevices::hcl.colors(n, palette = "Greens", rev = T) }) +
+mapview::mapview(sf_ssn_edges_sites_300_hrcd, zcol = "TreeDecAc", col.regions =  \(n){ grDevices::hcl.colors(n, palette = "YlOrBr", rev = T) })
+
+  
+bind_rows(
+  as_tibble(sf_ssn_edges_strm_hrcd) |> 
+    filter(EndYr == 2017) |> summarise(hrcd_tree_ac = sum(TreeDecAc), .by = c(cmplx_strm)) |> 
+    mutate(type_st = "intersect_line")
+  ,
+  as_tibble(sf_ssn_edges_strm_300_hrcd) |> 
+    filter(EndYr == 2017) |> summarise(hrcd_tree_ac = sum(TreeDecAc), .by = c(cmplx_strm)) |> 
+    mutate(type_st = "intersect_300ft")
+  ,
+  as_tibble(sf_ssn_edges_sites_300_hrcd) |> 
+    filter(EndYr == 2017) |> summarise(hrcd_tree_ac = sum(TreeDecAc), .by = c(cmplx_strm)) |> 
+    mutate(type_st = "IMW_site_reaches")
+) |> 
+  ggplot() +
+  geom_col(aes(hrcd_tree_ac, cmplx_strm, fill = cmplx_strm), show.legend = F) +
+  scale_fill_manual(values = pal_cmplx_strm) +
+  facet_wrap(~type_st, scales = "free") +
+  labs(x = "acres", y = NULL, 
+       title = "Total tree loss acres 2015-2017",
+       subtitle = "HRCD intersecting NHDPlusHR flowlines, directly & buffered")
+
+
+
+as_tibble(sf_ssn_edges_sites_300_hrcd) |> 
+  mutate(tree_loss = replace_na(TreeDecAc, 0) |> round(3)) |> 
+  summarize(
+    across(tree_loss, sum), 
+    .by = NHDPlusID
+    ) |> 
+  left_join(
+    as_tibble(sf_ssn_sites) |> 
+      select(starts_with("cmplx"), NHDPlusID, site, bankfull_width_mean, lwd_all_per100_mean, vlwd_per100_mean)
+    ,
+    by = "NHDPlusID"
+  ) |> 
+  filter(str_detect(cmplx_strm, "West|Stavis|Mill")) |> 
+  pivot_longer(cols = ends_with("_mean")) |> 
+  ggplot(aes(tree_loss, value, color = cmplx_strm, fill = cmplx_strm, label = site)) +
+  geom_point(alpha = 0.5, show.legend = F) +
+  scale_fill_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+  facet_wrap(~cmplx_strm + name, scales = "free") +
+  labs(x = "tree loss acres", y = "",
+       subtitle = "HRCD 2015-17 intersecting 300ft buffer on NHDPlusHR flowlines with IMW sites"
+       )
+
+
+as_tibble(sf_ssn_sites) |> 
+  ggplot(aes(bankfull_width_mean, lwd_all_per100_mean, color = cmplx_strm, fill = cmplx_strm)) +
+  geom_point(show.legend = F) +
+  scale_fill_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+  facet_wrap(~cmplx_strm, scales = "free")
+
+
+```
+
 
 ## scraps
 
@@ -2704,17 +2941,52 @@ site_year |>
 
 # Intro 
 
-Alongside flow and sediment, wood is fundamental to stream habitat dynamics (MANY CITES). The 'natural wood regime' articulated by Wohl et al. (2019) describes recruitment, transport, and storage processes, each with the potential to vary in magnitude, duration, frequency, timing, and rate of change. This conceptual model has emerged from extensive research into the complex interactions among water, rocks, and trees in the riverscape, and this large body of research has also addressed and encouraged efforts to reintroduce logs and 'coarse woody debris' into many systems, typically to increase hydraulic and habitat complexity and thereby benefit aquatic organisms. But despite recognition that wood is both important and spatiotemporally variable, few studies have described the dynamics of instream wood throughout the drainage networks of multiple streams over more than a decade. Here we quantify and describe patterns of interannual variation in large wood between 2007 and 2023 *[24?]* at hundreds of consistently surveyed reaches within 7 *[10?]* small independent basins in western Washington, USA. 
+Alongside flow and sediment, wood is fundamental to riverscape habitat dynamics. The 'natural wood regime' articulated by Wohl et al. (2019) describes recruitment, transport, and storage processes, each with the potential to vary in magnitude, duration, frequency, timing, and rate of change. This paradigm recognizes historical and ongoing simplification of the interactions among trees, rocks, and water in stream networks, and it describes the consequent fluvial habitat degradation, particularly in long-altered, temperate, forested watersheds. Indeed, this degradation has prompted widespread reintroduction of logs and 'coarse woody debris' in the western United States in recent decades, typically intended to benefit aquatic organisms via increased habitat diversity (Ockelford et al. 2024). 
 
-These data were collected as part of the Intensively Monitored Watersheds (IMW) program, a long-term, multi-location, collaborative evaluation of the population-level effects of habitat rehabilitation practices targeting Pacific salmon recovery (Bilby et al. 2005; Bennett et al. 2016). Physical and biological data are collected throughout several neighboring stream networks within each of the IMW 'complexes', enabling watershed-scale comparisons of the factors that may affect and limit salmonids in freshwater (Roni 2005; Bilby et al. 2023). Current best practice in stream rehabilitation seeks to identify 'limiting factors' and tailor 'process-based' interventions to ameliorate them. The IMW stream habitat observations extend and enrich our knowledge of how such processes presently operate in small, forested basins of the Pacific Northwest.
+Standardizing and systematizing the practice of such interventions, in conjunction with riparian and upland land management practices, and in the context of existing instream flow rules, would constitute the basis of 'target wood regimes' formulated to reverse impairments and meet other ecosystem service goals (Wohl et al. 2019). Yet practical management guidelines are still an area of active research, in part due to the logistical challenges of repeatedly and consistently counting wood and measuring its effects (e.g., Hassan 2022, Martens & Devine 2022, Scott 2024, Ruiz-Villanueva et al. 2024).
+
+Foundational studies have suggested [key] thresholds...but constrained by...
+
+surveying multiple locations once, inferring via space-for-time
+
+or surveying single locations repeatedly, inferring via spatial extrapolation
+
+
+  - Bilby & Ward 1989
+    - relationship to channel size
+  - Bilby & Ward 1991
+    - .1 x 2m at 70 sites, varied length 100m - 1.5km
+    - count density ~ channel size + forest_harvest (stand age) type
+    - Fig 1 log10(n/m^2) ~ log10(width_m); note odd axis scaling
+    - binned width at <7, 7-10, >10
+    - for frequency and volume responses, saw less separation OG to CC/SG at the smaller sites <5-7m
+    - could examine pool type obs relative to plunge/scour/backwater/dammed results
+
+  - Collins et al. 2002
+    - Nisq vs Sno & Stilly and vs archival
+    
+  - Hassan et al. 2005
+    - Table 1 - survey of 20 studies diam & length values of 'large'
+    - leads to table 2, categorical S-M-L based on ratios of piece length to channel width and piece diameter to depth...and phrasing of 'relative' wood and channel sizes
+    - distinguishing 'headwater' processes by degree of hillslope coupling (decreasing with larger DA and greater bnkw) and lateral constraint as key determinant of dynamics (recruitment, transport, storage); higher-order channels presumably still subject to riparian and hillslope effects _but_ also influence of upstream network;
+      - recruit: nice summary of mass wasting & avalanches for recruitment vs/as-well-as wind, bank erosion
+      - storage: mostly about difficulty of measuring
+      - output [transport plus 'attrition']: in headwaters, movement at highest flows only (esp largest pieces) supposing very episodic dyn
+    - Fig2 (!!) Not have seen this previously is *highly congruent* with 'explorer_lwd' figures!! including 5m inflection noted in text but without the caveats of compiling across studies with varied protocol
+      - testable: *"This has important implications for temporal and spatial variability of wood abundance in small streams, indicating that recruitment processes (and rates) from the adjacent hillslopes determine the spatial distribution and abundance of wood, while the time since the last debris flow explains the variance."*
+
+  - Fox & Bolton 2007
+    - ref conditions from 150 sites
+
+However, few studies have described the dynamics of instream wood throughout the drainage networks of multiple streams over more than a decade. Here we quantify patterns of interannual wood variation between 2007 and 2024 at *NNN* consistently surveyed reaches within *NNN* small independent basins in western Washington, USA.
+
+These data were collected as part of the Intensively Monitored Watersheds (IMW) program, a long-term, multi-location, collaborative evaluation of the population-level effects of habitat rehabilitation practices for Pacific salmon recovery (Bilby et al. 2005; Bennett et al. 2016). Physical and biological data are collected throughout several neighboring stream networks within each of the IMW 'complexes', enabling watershed-scale comparisons of the factors that may affect and limit salmonids in freshwater (Roni 2005; Bilby et al. 2023). Current best practice in stream rehabilitation seeks to identify 'limiting factors' and tailor 'process-based' interventions to ameliorate them. The IMW stream habitat observations extend and enrich our knowledge of how such processes presently operate in small, forested basins of the Pacific Northwest.
 
 This paper examines spatial variation in the temporal variation in large wood density, asking how measures of change in time relate to network position and topographic attributes. 
 
 
-  - Bilby & Ward 1991
-  - Collins et al. 2002
-  - Hassan et al. 2005
-  - Fox & Bolton 2007
+
+
   - Lininger & Hilton 2022
     - redwood long term
   - Martens & Devine 2022
@@ -2726,6 +2998,11 @@ This paper examines spatial variation in the temporal variation in large wood de
 wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes over broad spatial scales will remain difficult"
     - Re: managing for target wood regimes: "documented effects of wood mobility suggest the importance of managing for dynamic rather than static wood loads within river corridors. Managing for wood dynamics is challenging because it requires identifying and managing for processes of wood recruitment and transport, which commonly involve wider and longer portions of a river network than the limited channel segments that are typically the focus of management (e.g., Boyer et al. 2003)."
   
+
+  - Ockelford et al 2024 - working with wood in western US
+  - Scott 2024 - jams in KingCo
+    - jam measures signif but incompletely pred habitat morphological effects
+  - Ruiz-Villanueva et al. 2024 https://onlinelibrary.wiley.com/doi/abs/10.1002/esp.5765
 
 
 # Methods
@@ -2747,6 +3024,14 @@ wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes o
 
 
 # Discussion
+
+- Legally binding 'instream wood' requirements akin to stipulated flows at gaged control points?
+
+
+  - McHenry et al. 1998
+    - single repeat/contrast 82 vs 93 for 28 100m reaches, differentiating stable counts from decreased volumes due to OG loss
+    - potentially useful contrast 
+
 
 # Cited
 

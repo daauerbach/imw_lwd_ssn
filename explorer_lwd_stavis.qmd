@@ -836,7 +836,7 @@ site_year_dl1 |>
 #but need to reformulate some testable hypotheses and re-test - talk to Will D about 'what happened' then see if data support
 ```
 
-# render from this chunk 
+# breakout from this chunk 
 
 - temporal: test larger magnitude shifts (positive or both?) shifts against precip (overall wetness, peak flow, n-days over 25.4)
 - spatial: reassociate to nhdphr for DA rather than bankfull...avoids using a term in the response as a pred
@@ -875,6 +875,8 @@ lwdsy |> ggplot() +
   labs(x = "LWD size class", subtitle = "75th quantile values in black")
 }+ 
   plot_layout(ncol = 1)
+
+#ggsave("f_lwdsy_class_diffs_boxes.png", height = 9, width = 11, bg = "white")
 
 # #boxes, mid and large only
 # lwdsy |> 
@@ -929,6 +931,8 @@ lwdsy |>
        subtitle = summarise(lwd_class, dl = paste(dl, collapse = "; "), .by = lwd_class) |> 
          unite("l", lwd_class, dl, sep = ": ") |> pull(l) |> paste(collapse = ",   "))
 
+#ggsave("f_ref_strm_lwd_site_series_by_class.png", height = 11, width = 14, bg = "white")
+
 #next - test larger magnitude shifts (positive or both?) shifts against precip (overall wetness, peak flow, n-days over 25.4)
 
 
@@ -946,6 +950,8 @@ lwdsy |>
   #facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F))
   facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F), scale = "free_y")
 
+#ggsave("f_ref_strm_lwd_n_bnk.png", height = 11, width = 14, bg = "white")
+
 #whereas normalizing by site-reach bankfull width shows consistent decline in areal density across streams and, to a lesser degree, size classes
 #the survey protocol increases longitudinal transect spacing with greater bankfull width, such that a larger area is observed 
 #but if density were constant, raw counts would increase with bankfull (as larger observed area meant more wood encountered)
@@ -962,6 +968,9 @@ lwdsy |>
   #facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F))
   facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F), scale = "free_y")
 
+#ggsave("f_ref_strm_lwd_n100m2_bnk.png", height = 11, width = 14, bg = "white")
+
+
 #summarized across years per site...
 lwdsy |> 
   mutate(n_100m2 = 100 * (n / lgth_wdth)) |> 
@@ -973,7 +982,11 @@ lwdsy |>
   scale_color_manual(values = pal_strm, aesthetics = c("color","fill")) +
   geom_point(size = 0.8, alpha = 0.9, show.legend = T) +
   guides(fill = guide_none()) +
-  facet_wrap(~name+lwd_class, labeller = label_wrap_gen(multi_line = F), scale = "free_y")
+  facet_wrap(~name+lwd_class, labeller = label_wrap_gen(multi_line = F), scale = "free_y") +
+  labs(y = NULL)
+
+#ggsave("f_ref_strm_lwd_smry_site_n_bnk.png", height = 11, width = 14, bg = "white")
+
 
 #next - reassociate to nhdphr for DA rather than bankfull...avoids using a term in the response as a pred
 
@@ -1148,7 +1161,7 @@ lwdsy |>
 
 
 plotly::plot_ly(
-  data = nwm |> filter(comid=="24287878") |> mutate(wyd = seq_along(wy), .by = wy) |> filter(wy != 2008)
+  data = nwm |> filter(comid=="24287878") |> mutate(wyd = seq_along(wy), .by = wy) #|> filter(wy != 2008)
   , 
   type = "scatter3d", mode = "lines",
   x = ~wyd, y = ~wy, z = ~cfs, name = ~wy,
@@ -1252,6 +1265,47 @@ lwdsy_nwm_site_cor |>
   geom_jitter(size = 0.7, width = 0.3) + geom_hline(yintercept = 0) + 
   labs(title = "Per-site Kendall tau of year-year differenced wood count and high flow by size class: n_dl1 ~ q90_dl1 | {S,M,L}")
 }
+
+## UNFINISHED
+## different direction - stream power? 
+#this is a super rough index, just taking product of NHDPlusHR 'slope' and NWM Q in cfs
+#not dealing with units so values are not meaningful in themselves
+#complexity here is potentially multiple IMW sites per NHDPlusHR reaches, with multiple reaches per NWM comid/catchment
+
+#so this gets the per-site slopes, sometimes duplicated by NHDplusID,
+#and then associates per-water year max estimated flow, duplicated by comid,
+pwr <- inner_join(
+  inner_join(
+    site_comid
+    ,
+    as_tibble(sf_edges) |> 
+      drop_na(site) |> 
+      filter(site != "STA020") |> 
+      select(NHDPlusID, dasqkm_tot, slope, site)
+    , by = "site" 
+  ) |> arrange(NHDPlusID)
+  ,
+  nwm |> 
+    summarise(
+      across(cfs, list(
+        max = ~max(.)
+      )),
+      .by = c(comid, wy)
+    )
+  ,
+  by = "comid"
+  ) |> 
+  mutate(
+    pwr = slope * cfs_max
+  ) |> 
+  left_join(
+    lwdsy, by = c("strm", "site", "wy" = "year")
+  )
+
+pwr |> 
+  ggplot(aes(pwr, n)) +
+  geom_point() +
+  facet_wrap(~lwd_class, scales = "free_y")
 
 ```
 
