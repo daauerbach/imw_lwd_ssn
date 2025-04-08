@@ -72,6 +72,8 @@ site_meta <- site_meta |>
 
 ```
 
+# initial 
+
 the linear-density measure is, by definition, insensitive to bankfull width
 which also means it is unsurprising that it shows little relationship to drainage area and/or elevation...?
 
@@ -911,6 +913,8 @@ lwdsy <- lwdsy |>
     .by = c(strm, site, year, lwd_class)
   )
 
+lwdsy |> filter(lwd_class=="S") |> summarise(km = sum(up_down_lgth)/1000, .by = c(strm))
+
 # #not helpful
 # lwdsy |> 
 #   split(~strm, drop = T) |> 
@@ -1274,7 +1278,7 @@ lwdsy_nwm_site_cor |>
 
 #so this gets the per-site slopes, sometimes duplicated by NHDplusID,
 #and then associates per-water year max estimated flow, duplicated by comid,
-pwr <- inner_join(
+strm_pwr <- inner_join(
   inner_join(
     site_comid
     ,
@@ -1288,24 +1292,57 @@ pwr <- inner_join(
   nwm |> 
     summarise(
       across(cfs, list(
+        q90 = ~quantile(.,p=0.9),
         max = ~max(.)
       )),
       .by = c(comid, wy)
     )
   ,
   by = "comid"
-  ) |> 
+  ) |>
   mutate(
-    pwr = slope * cfs_max
+    across(starts_with("cfs_"), list(pwr = ~. * slope))
   ) |> 
   left_join(
     lwdsy, by = c("strm", "site", "wy" = "year")
   )
 
-pwr |> 
-  ggplot(aes(pwr, n)) +
-  geom_point() +
-  facet_wrap(~lwd_class, scales = "free_y")
+
+{
+ggplot() + 
+  geom_sf(data = sf_site_nhdp, alpha = 0.5) + 
+  geom_sf(data = sf_edges, color = "lightblue") + 
+  geom_sf_text(data = sf_site_meta, aes(label = site)) + 
+  geom_sf_text(data = sf_site_nhdp, aes(label = comid), color = "blue", size = 6) +
+  labs(x = NULL, y = NULL)
+}+{
+strm_pwr |> 
+  distinct(strm, comid, wy, .keep_all = T) |> 
+  select(strm, comid, wy, ends_with("pwr")) |> 
+  pivot_longer(ends_with("pwr")) |> 
+  ggplot(aes(x = wy, y = value, linetype = name, color = comid, fill = comid)) +
+  geom_line(linewidth = 0.9, alpha = 0.5, show.legend = F) +
+    geom_vline(xintercept = c(2008,2019), linetype = 3) +
+  scale_x_continuous(name = NULL, breaks = seq(2000,2024,by=3), limits = c(2001,2024)) +
+  facet_wrap(~name+comid, labeller = label_wrap_gen(multi_line = F), ncol = 5, scale = "free_y") +
+  labs(y = "pseudopower")
+}+{
+strm_pwr |> 
+  drop_na(lwd_class) |> 
+  ggplot(aes(wy, n, group = site, color = comid)) +
+  geom_line(linewidth = 0.5, alpha = 0.5, show.legend = F) +
+    geom_vline(xintercept = c(2008,2019), linetype = 3) +
+  scale_x_continuous(name = NULL, breaks = seq(2000,2024,by=3), limits = c(2001,2024)) +
+  facet_wrap(~lwd_class+comid, labeller = label_wrap_gen(multi_line = F), ncol = 5, scale = "free_y") +
+  labs(y = NULL)
+} + #plot_layout(heights = c(4,6))
+plot_layout(
+design = "
+ABBB
+ACCC
+")
+
+ggsave("f_stavis_lwd_by_class_by_comid_nwm_pseudopwr.png", height = 10, width = 14, bg = "white")
 
 ```
 

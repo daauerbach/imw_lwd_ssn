@@ -2941,9 +2941,15 @@ site_year |>
 
 # Intro 
 
-Alongside flow and sediment, wood is fundamental to riverscape habitat dynamics. The 'natural wood regime' articulated by Wohl et al. (2019) describes recruitment, transport, and storage processes, each with the potential to vary in magnitude, duration, frequency, timing, and rate of change. This paradigm recognizes historical and ongoing simplification of the interactions among trees, rocks, and water in stream networks, and it describes the consequent fluvial habitat degradation, particularly in long-altered, temperate, forested watersheds. Indeed, this degradation has prompted widespread reintroduction of logs and 'coarse woody debris' in the western United States in recent decades, typically intended to benefit aquatic organisms via increased habitat diversity (Ockelford et al. 2024). 
+Wood and its interactions with flow and sediment are fundamental to riverscape habitat dynamics. The 'natural wood regime' articulated by Wohl et al. (2019) describes recruitment, storage, and transport processes, each varying in magnitude, duration, frequency, timing, and rate of change. This wood regime paradigm recognizes historical and ongoing simplification of the complex interplay among trees, rocks, and water in stream networks, and it describes the consequent fluvial habitat degradation, particularly in long-altered, temperate, forested watersheds subject to wood removal, channel straightening, and floodplain disconnection. In recent decades, such degradation has prompted widespread reintroduction of logs and various forms of engineered jams in the western United States, typically intended to benefit aquatic organisms via increased habitat diversity (Roni et al. 2015, Ockelford et al. 2024).
 
-Standardizing and systematizing the practice of such interventions, in conjunction with riparian and upland land management practices, and in the context of existing instream flow rules, would constitute the basis of 'target wood regimes' formulated to reverse impairments and meet other ecosystem service goals (Wohl et al. 2019). Yet practical management guidelines are still an area of active research, in part due to the logistical challenges of repeatedly and consistently counting wood and measuring its effects (e.g., Hassan 2022, Martens & Devine 2022, Scott 2024, Ruiz-Villanueva et al. 2024).
+Much has been learned from such projects, and consensus around general guidance has emerged, including avoidance of unsuitable locations and designs, inflexible piece count targets, and approaches that neglect monitoring and follow-up, especially around the secondary effects of initial interventions (e.g., Tables 3 and 4 in Ockelford et al. 2024). Yet practicable, quantitative management guidelines are still an area of active research, in part due to the logistical challenges of consistent measurements over long durations and diverse settings (e.g., Hassan 2022, Martens & Devine 2022, Scott 2024, Ruiz-Villanueva et al. 2024). Overcoming these challenges is necessary to reach a more systematized legal and policy framework of 'target wood regimes' formulated to reverse impairments and meet other ecosystem service goals (Wohl et al. 2019), in the context of existing instream or environmental flow rules and in conjunction with riparian and upland land management practices.
+
+This paper examines spatial and temporal variation in large wood density, analyzing data collected between 2007 and 2024 at *NNN* consistently surveyed reaches within *NNN* small independent basins in western Washington, USA, and asking how measures relate to network position and topographic attributes *[and estimated discharge?]*. These data were collected as part of the Intensively Monitored Watersheds (IMW) program, a long-term, multi-location, collaborative evaluation of the population-level effects of habitat rehabilitation practices for Pacific salmon recovery (Bilby et al. 2005; Bennett et al. 2016; Krueger et al. *in prep*). Physical and biological data collected throughout 3-4 neighboring stream networks within each of three IMW 'complexes' enable watershed-scale comparisons of the factors affecting and limiting salmonids in small, forested basins of the Pacific Northwest (Roni 2005; Bilby et al. 2023).
+
+
+
+numeric thresholds, ranges, etc.
 
 Foundational studies have suggested [key] thresholds...but constrained by...
 
@@ -2973,17 +2979,21 @@ or surveying single locations repeatedly, inferring via spatial extrapolation
       - storage: mostly about difficulty of measuring
       - output [transport plus 'attrition']: in headwaters, movement at highest flows only (esp largest pieces) supposing very episodic dyn
     - Fig2 (!!) Not have seen this previously is *highly congruent* with 'explorer_lwd' figures!! including 5m inflection noted in text but without the caveats of compiling across studies with varied protocol
+      - can validate as: [Bilby & Ward 1989 density decay with width, central tendency] --> [Hassan et al 2005, also variance decay with width] --> [IMW shows both, multiple basins, several scales] --> and/but why 'hi vs lo' where var greatest in narrow site-reaches/network positions
       - testable: *"This has important implications for temporal and spatial variability of wood abundance in small streams, indicating that recruitment processes (and rates) from the adjacent hillslopes determine the spatial distribution and abundance of wood, while the time since the last debris flow explains the variance."*
+    - attempt to explain some biogeographic variation in species composition (lifespan) and MAI (mean annual increment); low[er]land riparian longer lived, less disturbance prone, general expectation of lower inputs; then also note physical diffs of mature size trunks with lower/larger/longerlived also requiring considerably deeper flows to mobilize;
+    - gaps: role of mass wasting; relative importance of depletion processes;
+      - *Generally, ecosystem type affects the quality and quantity of wood available to a channel, while the spatial and temporal variability of wood recruitment, storage, and loss depends on variations in hydrology, forest type, and dominant erosion and transport processes. However, the effect of these variables as they change locally across a watershed (from valley bottom to mountaintop) or regionally across the landscape (from maritime to continental climates) is largely unknown and represents a third major knowledge gap.*
 
   - Fox & Bolton 2007
-    - ref conditions from 150 sites
+    - ref conditions from 150 sites, constraints of 'no upstream logging' and 'no other LU or hydro modification' fundamentally limits locations and scales...
+    - explicitly targeting varied, stratified targets: *"A one-size-fits-all wood target approach may diminish habitat heterogeneity by reducing the natural range of wood conditions. Therefore, knowledge of the natural variation of instream wood loads among different stream types and regions should improve restoration activities as well as the scientific defensibility of regulatory thresholds."*
+    - HMMM, opposite to Bilby, Hassan and IMW decay with larger BFW? *"The number and volume of instream wood per 100 m of channel length generally increase as drainage area increases (linear regression: P , 0.001) and as streams become less confined, particularly in watersheds greater than about 10 km2 in drainage area."*
+    - "Bank-full width is supported as the most significant geomorphic indicator for predicting instream wood volumes and number of pieces" --> but again, this reln appears to be opposite that shown elsewhere of decreasing LWD with increasing BFW
 
-However, few studies have described the dynamics of instream wood throughout the drainage networks of multiple streams over more than a decade. Here we quantify patterns of interannual wood variation between 2007 and 2024 at *NNN* consistently surveyed reaches within *NNN* small independent basins in western Washington, USA.
 
-These data were collected as part of the Intensively Monitored Watersheds (IMW) program, a long-term, multi-location, collaborative evaluation of the population-level effects of habitat rehabilitation practices for Pacific salmon recovery (Bilby et al. 2005; Bennett et al. 2016). Physical and biological data are collected throughout several neighboring stream networks within each of the IMW 'complexes', enabling watershed-scale comparisons of the factors that may affect and limit salmonids in freshwater (Roni 2005; Bilby et al. 2023). Current best practice in stream rehabilitation seeks to identify 'limiting factors' and tailor 'process-based' interventions to ameliorate them. The IMW stream habitat observations extend and enrich our knowledge of how such processes presently operate in small, forested basins of the Pacific Northwest.
-
-This paper examines spatial variation in the temporal variation in large wood density, asking how measures of change in time relate to network position and topographic attributes. 
-
+  - Roni et al. 2015 Fact, fiction, future
+    - Fig1 based on Abbe & Montgomery 2003 from Queets
 
 
 
@@ -3000,8 +3010,11 @@ wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes o
   
 
   - Ockelford et al 2024 - working with wood in western US
+    - Table 4 'likely ineffective' situations is nice summary: one and done, poor location or design, fixed targets, no consideration of secondary
+
   - Scott 2024 - jams in KingCo
     - jam measures signif but incompletely pred habitat morphological effects
+    
   - Ruiz-Villanueva et al. 2024 https://onlinelibrary.wiley.com/doi/abs/10.1002/esp.5765
 
 
@@ -3009,18 +3022,35 @@ wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes o
 
 ## Data collection
 
+Pending decisions about which basins and referencing Krueger et al. *in prep*
+
+Large wood counts were made as part of the broader collection of stream habitat data in the western Washington IMW study. Annual surveys were conducted at sites within three complexes of 10 small, adjacent watersheds: the Strait of Juan de Fuca complex (ST) includes East Twin, West Twin (reference), and Deep creeks; the Hood Canal complex (HC) includes Little Anderson, Big Beef, Seabeck and Stavis (reference) creeks; the Lower Columbia complex (LC) includes Germany, Abernathy, and Mill (reference) creeks. Sampled site-reaches were identified using a random, spatially balanced design stratified by stream order (Stevens and Olsen 2004), with surveys conducted between June and October following standardized protocols based on established assessments (Lazorchak et al. 1998, Crawford et al. 2002, Roper et al. 2003). Data from 2007 onward are presented here. At each site in each year, measurements and counts are made at and between 21 equally spaced cross-sectional transects, positioned equidistant and perpendicular to flow along a length of stream that is the longer of either 40 bankfull widths or 300m. Measurements at each transect included bankfull width (to the nearest 0.0 m), water depth (≥5 points to the nearest 0.00 m), and tallies of substrate size classes. Wood within the bankfull channel was counted by length and diameter classes between transects. Substrate was classified at approximately 5 points per transect as either smooth bedrock or rough bedrock (> 4 m), boulder (250 – 4000 mm), cobble (64 – 250 mm), coarse gravel (16 – 64 mm), fine gravel (2 – 16 mm), sand (0.06 – 2 mm), fines (< 2 mm), hardpan, wood, or other. When found, dry channels were sampled and all possible measurements were made (e.g., depth is not measured).
+
+*More detail on length and diameter classes and scoring and QAQC and standardization*
+
 ## Analysis
 
-- Reduced to sites with complete or nearly complete series (BIB drops above Symington?)
-- George: what about redoing counts/densities better stratified by piece length and diameter
+- restratification of counts to SML
+  - supp table and figure
+- 'steady state' spatial: (count | density) ~ bankfull ---> DA? + slope + elev
+  - redo SSN with S-M-L response stratification; upArea corr with DA enough to drop?
+- change relative to NWM
+  - strat by SML --> S more responsive 90/50, M-L to max?
+  - separate site series onto comid Q
+  - corr of diff?
+  - threshold (power?)
+- 3 vs more non-ref basins
 
-- ACF, AR1 as well as or instead of CV?
-- KPSS
+- HRCD/NLCD?
+
+
+- Reduced to sites with complete or nearly complete series (BIB drops above Symington?)
+- ACF, AR1 as well as or instead of CV? KPSS?
 - corrr::correlate(method = "kendall") |> corrr::shave() |> corrr::rplot(print_cor = T) + scale_x_discrete(guide = guide_axis(n.dodge = 2))
+
 
 # Results
 
-- by response measure?
 
 
 # Discussion
@@ -3032,6 +3062,9 @@ wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes o
     - single repeat/contrast 82 vs 93 for 28 100m reaches, differentiating stable counts from decreased volumes due to OG loss
     - potentially useful contrast 
 
+scraps
+ - A general pathologic condition has been identified (lack of wood), and a therapeutic approach has been proposed and adopted (add wood), but much remains to be learned about exactly what doses, delivered when, where and how will provide the most benefit across the range of individual watershed 'patients'.
+ - Current best practice in stream rehabilitation seeks to identify 'limiting factors' and tailor 'process-based' interventions to ameliorate them.
 
 # Cited
 
