@@ -1243,7 +1243,8 @@ lwdsy_nwm |>
 #pooled site pearson cor for count and Q90 and for lag1-differenced
 #differenced looks tolerably close to normal...
 lwdsy_nwm |> 
-  #GGally::ggpairs(columns = 9:10, aes(color = lwd_class, fill = lwd_class, alpha = 0.3))
+  GGally::ggpairs(columns = 9:10, aes(color = lwd_class, fill = lwd_class, alpha = 0.3))
+lwdsy_nwm |> 
   GGally::ggpairs(columns = c(11,13), aes(color = lwd_class, fill = lwd_class, alpha = 0.3))
 
 #stratifying to per-site series direct correlation between lwd-measure ~ Q
@@ -1345,4 +1346,269 @@ ACCC
 ggsave("f_stavis_lwd_by_class_by_comid_nwm_pseudopwr.png", height = 10, width = 14, bg = "white")
 
 ```
+
+# starting again from setup to examine more basins
+
+```{r new_setup}
+library("tidyverse", quietly = T)
+library("sf")
+library("patchwork")
+library("gt")
+theme_set(theme_minimal()) 
+
+## uncomment to rebuild
+# load("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/imw_hab_250307.RData")
+# 
+# wood_sy <- hab$lwd_site_year |> 
+#   select(strm, site, year, up_down_lgth, bnk_wdth_mean, lgth_wdth, starts_with("d")) |> 
+#   pivot_longer(cols = starts_with("d"), names_to = "dl", values_to = "n") 
+# 
+# #q75 separates m/l
+# wood_classes <- wood_sy |>
+#   summarise(
+#     across(n, list(
+#       q50 = ~median(., na.rm = T),
+#       q75 = ~quantile(., p = 0.75, na.rm = T)
+#       )), 
+#     .by = c(dl)
+#     ) |> 
+#   arrange(desc(n_q75)) |> 
+#   mutate(wood_class = rep(c("S","M","L"), each = 4) |> factor(levels = c("S","M","L"))) |> 
+#   select(dl, wood_class)
+# 
+# #join and aggregrate by S/M/L classes
+# wood_sy_sml <- wood_sy |> 
+#   left_join(wood_classes, by = "dl") |>
+#   summarise(
+#     across(c(up_down_lgth, bnk_wdth_mean, lgth_wdth), ~.[1]),
+#     across(n, sum),
+#     .by = c(strm, site, year, wood_class)
+#   )
+# 
+# #catchment polys nonspatially subset but COMIDs in streamcat
+# sf_nhdp_wa <- readRDS("~/T/DFW-Team WDFW Watershed Synthesis - flow_trees_heat/sf_nhdp_wa.rds")
+# #subset cat polys, to get comids can also use nhdplusTools::discover_nhdplus_id(sf_site_meta[1,])
+# sf_site_nhdp <- sf_nhdp_wa[sf_site_meta,] |> select(-state)
+# rm(sf_nhdp_wa)
+# 
+# site_comid <- st_join(sf_site_meta, sf_site_nhdp) |>
+#   as_tibble() |> select(strm, site, comid) 
+# #site_comid |> count(comid)
+# 
+# #reduce to water years 2000 (missing 1999 Oct-Dec) and 2023 (missing 2023 Jan-Sep)
+# #takes a few but not terrible
+# nwm <- expand_grid(y = 2000:2022, m = 1:12) |> 
+#   mutate(wy = if_else(m > 9, y+1, y)) |>
+#   filter(between(wy, 2001, 2022)) |> 
+#   mutate(
+#     nwm = map2(y, m,
+#       ~readRDS(paste0("~/T/DFW-Team WDFW Watershed Synthesis - data_common/nwm_retro/v3_0/nwm_wa_",.x,"_",str_pad(.y,2,pad = "0"),".rds"))[,unique(site_comid$comid)]
+#       )
+#   ) |> 
+#   unnest(nwm) |> 
+#   mutate(d = seq_along(m), .by = c(y,m)) |> 
+#   pivot_longer(cols = -c(y,m,wy,d), names_to = "comid", values_to = "cfs")
+
+load("imw_wood_nwm.RData")
+
+#NHDplusHR flowlines with DA, slope, elev etc from SSNbler prep
+ssn <- readRDS("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/imw_lwd_ssn/ssns_list.rds")
+
+sf_edges <- map_df(
+  ssn,
+  ~left_join(
+    .x$edges |> select(NHDPlusID, dasqkm_tot, elev_min, slope, upDist)
+    ,
+    as_tibble(.x$obs) |> select(site, NHDPlusID)
+    ,
+    by = "NHDPlusID"
+    ) |> 
+    mutate(
+      cmplx_strm = .x$obs$cmplx_strm[1],
+      strm = .x$obs$strm[1]
+    )
+)
+
+#sf_edges |> split(~strm) |> map(~ggplot(.x) + geom_sf(aes(color = strm)) + scale_color_manual(values = pal_strm)) |> wrap_plots()
+
+```
+
+```{r f_supp_wood_classes}
+{
+#boxes by stream
+wood_sy |> ggplot() + scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_boxplot(aes(dl, n, fill = strm), linewidth = 0.3, color = "grey", outlier.size = 0.5) +
+  labs(x = NULL, title = "Sample distributions of site-year LWD counts by diameter and length class") +
+    theme(legend.position = "top")
+}+{
+#boxes no stratification by stream
+wood_sy |> ggplot() + 
+  geom_boxplot(aes(dl, n), linewidth = 0.5, color = "grey30", outlier.size = 0.5) +
+    geom_text(data = summarise(wood_sy, n_q75 = quantile(n, p = 0.75, na.rm = T), .by = dl),
+              aes(dl, label = n_q75), y = 200) + #label = paste0("q75: ", n_q75)
+  labs(x = "size class", subtitle = "75th quantile values in black")
+}+ 
+  plot_layout(ncol = 1)
+
+```
+
+the survey protocol increases longitudinal transect spacing with greater bankfull width, such that a larger area is observed 
+counts normalized by surveyed area show consistent decline with site-reach bankfull width, especially for smallest size class
+if density were constant with bankwidth, raw counts would increase with bankfull, as larger observed area meant more wood encountered
+
+```{r f_count_bnk_wdth}
+#may not want 3rd order poly as fit line and R2?
+wood_sy_sml |> 
+  mutate(
+    n_m2 = n / lgth_wdth,
+    n_100m2 = 100 * (n / lgth_wdth)
+    ) |> 
+  ggplot(aes(bnk_wdth_mean, n_m2, color = strm)) +
+#  ggplot(aes(bnk_wdth_mean, n_100m2, color = strm)) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_point(size = 0.3, alpha = 0.6, show.legend = F) +
+  #ggpmisc::stat_poly_line(color = "blue") +
+  ggpmisc::stat_poly_line(formula = y ~ poly(x, degree = 3, raw = T), color = "red", se = F) +
+  #ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+  ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2")), formula = y ~ poly(x, degree = 3, raw = T), color = "red", ) +
+  #facet_wrap(~strm+lwd_class, labeller = label_wrap_gen(multi_line = F))
+  facet_wrap(wood_class~strm, labeller = label_wrap_gen(multi_line = F), nrow = 3, scale = "free_y")
+
+```
+
+sd of areal density also decays with bankfull but as expected for strong pos corr sd~mean
+
+```{r f_notevensupp_count_sd}
+wood_sy_sml |> 
+  mutate(
+    n_m2 = n / lgth_wdth,
+    n_100m2 = 100 * (n / lgth_wdth)
+    ) |> 
+  summarise(
+    across(c(bnk_wdth_mean, n, n_m2), list(mean = ~mean(., na.rm=T))) ##grand means per site across years
+    ,
+    across(c(n, n_m2), list(sd = ~sd(., na.rm = T))), .by = c(strm, site, wood_class)
+    ) |> 
+# #  ggplot(aes(bnk_wdth_mean_mean, n_sd, color = strm)) +
+#   ggplot(aes(bnk_wdth_mean_mean, n_m2_sd, color = strm)) +
+#   scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+#   geom_point(size = 0.3, alpha = 0.6, show.legend = F) +
+#   facet_wrap(wood_class~strm, labeller = label_wrap_gen(multi_line = F), nrow = 3, scale = "free_y")
+### as expected given...
+  ggplot(aes(n_m2_mean, n_m2_sd, size = bnk_wdth_mean_mean, color = strm)) + scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) + geom_point(alpha = 0.4)
+```
+
+```{r cfs_slp}
+#warns 'many-many' on join of by-year q90 and max per comid, since comid duplicated over sites
+cfs_slp <- inner_join(
+  inner_join(
+    site_comid
+    ,
+    as_tibble(sf_edges) |> 
+      drop_na(site) |> 
+      filter(site != "STA020") |> 
+      select(site, NHDPlusID, dasqkm_tot, slope, elev_min, upDist)
+    , by = "site" 
+  ) |> arrange(NHDPlusID)
+  ,
+  nwm |> 
+    summarise(
+      across(cfs, list(
+        q90 = ~quantile(.,p=0.9),
+        max = ~max(.)
+      )),
+      .by = c(comid, wy)
+    ) 
+  ,
+  by = "comid"
+  ) |>
+  mutate(
+    across(starts_with("cfs_"), list(cfs_slp = ~. * slope))
+  ) |> 
+  left_join(
+    wood_sy_sml, by = c("strm", "site", "wy" = "year")
+  )
+```
+
+```{r series}
+
+map(
+  sort(unique(cfs_slp$strm))
+  ,
+  \(s) {
+    d <- filter(cfs_slp, strm == s)
+    
+    basin <- ggplot() + 
+      geom_sf(data = semi_join(sf_site_nhdp, d, by = "comid"), alpha = 0.5) + 
+      geom_sf_text(data = semi_join(sf_site_nhdp, d, by = "comid"), aes(label = comid), color = "blue", size = 6) +
+      geom_sf(data = filter(sf_edges, strm == s), color = "lightblue") + 
+      geom_sf(data = filter(sf_site_meta, strm == s), size = 0.8) + 
+      geom_sf_text(data = filter(sf_site_meta, strm == s), aes(label = site), size = 3) + 
+      labs(x = NULL, y = NULL) +
+      theme(axis.text = element_text(size = 6))
+    
+    flow <- d |>
+      distinct(strm, comid, wy, .keep_all = T) |>
+      select(strm, comid, wy, ends_with("cfs_slp")) |>
+      pivot_longer(ends_with("cfs_slp")) |>
+      ggplot(aes(x = wy, y = value, linetype = name, color = comid, fill = comid)) +
+      geom_line(linewidth = 0.9, alpha = 0.5, show.legend = F) +
+      geom_point(size = 0.5, show.legend = F) +
+      #geom_vline(xintercept = c(2008,2019), linetype = 3) +
+      scale_x_continuous(name = NULL, breaks = seq(2000,2024,by=2), limits = c(2001,2024), guide = guide_axis(n.dodge = 2)) +
+      #facet_wrap(~name+comid, labeller = label_wrap_gen(multi_line = F), nrow = 2, scale = "free_y") +
+      #facet_wrap(~comid, labeller = label_wrap_gen(multi_line = F), nrow = 1, scale = "free_y") +
+      facet_wrap(~comid, labeller = label_wrap_gen(multi_line = F), nrow = 1, scale = "fixed") +
+      labs(y = "cfs * slope") + theme(axis.text = element_text(size = 8))
+
+    wood <- d |> 
+      drop_na(wood_class) |> 
+      ggplot(aes(wy, n, group = site, color = comid)) +
+      geom_line(linewidth = 0.5, alpha = 0.5, show.legend = F) +
+    #geom_vline(xintercept = c(2008,2019), linetype = 3) +
+      scale_x_continuous(name = NULL, breaks = seq(2000,2024,by=2), limits = c(2001,2024), guide = guide_axis(n.dodge = 2)) +
+      #facet_wrap(~wood_class+comid, labeller = label_wrap_gen(multi_line = F), nrow = 3, scale = "free_y") +
+      facet_grid(rows = vars(wood_class), cols = vars(comid), labeller = label_wrap_gen(multi_line = F), scale = "free_y") +
+      labs(y = NULL) + theme(axis.text = element_text(size = 8))
+
+      {basin} + {flow} + {wood} + 
+      plot_layout(design = "ABBB\nACCC", heights = c(.4,.6))
+    
+    ggsave(paste0("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/f_cfs_slp_wood_class_", str_split_i(s, " ", i = 1),".png"), bg = "white", height = 10, width = 18, dpi = 100)
+  }
+)
+
+```
+
+```{r scatter}
+
+map(
+  sort(unique(cfs_slp$strm))
+  ,
+  \(s) {
+    d <- filter(cfs_slp, strm == s)
+    {
+      d |> 
+        drop_na(wood_class) |> 
+        ggplot(aes(cfs_max_cfs_slp, n, group = site, color = comid)) +
+        geom_point(size = 0.5, alpha = 0.8, show.legend = F) +
+        geom_smooth(se = F, method = "lm", linewidth = 0.4, alpha = 0.5, show.legend = F) +
+        facet_grid(rows = vars(wood_class), cols = vars(comid), labeller = label_wrap_gen(multi_line = F), scale = "free_y") +
+        theme(axis.text = element_text(size = 8))
+    } / {
+      d |> 
+        drop_na(wood_class) |> 
+        ggplot(aes(cfs_q90_cfs_slp, n, group = site, color = comid)) +
+        geom_point(size = 0.5, alpha = 0.8, show.legend = F) +
+        geom_smooth(se = F, method = "lm", linewidth = 0.4, alpha = 0.5, show.legend = F) +
+        facet_grid(rows = vars(wood_class), cols = vars(comid), labeller = label_wrap_gen(multi_line = F), scale = "free_y") +
+        theme(axis.text = element_text(size = 8))
+    }
+    ggsave(paste0("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/f_cfs_slp_wood_class_", str_split_i(s, " ", i = 1),"_scatter.png"), bg = "white", height = 10, width = 14, dpi = 100)
+  }
+)
+
+```
+
+
 
