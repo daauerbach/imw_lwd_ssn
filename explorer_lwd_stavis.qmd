@@ -1495,7 +1495,10 @@ wood_sy_sml |>
 #   geom_point(size = 0.3, alpha = 0.6, show.legend = F) +
 #   facet_wrap(wood_class~strm, labeller = label_wrap_gen(multi_line = F), nrow = 3, scale = "free_y")
 ### as expected given...
-  ggplot(aes(n_m2_mean, n_m2_sd, size = bnk_wdth_mean_mean, color = strm)) + scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) + geom_point(alpha = 0.4)
+  ggplot(aes(n_m2_mean, n_m2_sd, size = bnk_wdth_mean_mean, color = strm)) + 
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) + 
+  geom_point(alpha = 0.4) +
+  facet_wrap(~wood_class, labeller = label_wrap_gen(multi_line = F), nrow = 3, scale = "free_y")
 ```
 
 ```{r cfs_slp}
@@ -1580,7 +1583,7 @@ map(
 
 ```
 
-```{r scatter}
+```{r scatter_by_comid_by_strm}
 
 map(
   sort(unique(cfs_slp$strm))
@@ -1610,5 +1613,144 @@ map(
 
 ```
 
+For Q90: per-water year positive corr across many sites for smallest class in HC and LC but not ST
+no consistent reln across sites for M or L in any complex/stream
 
+```{r scatter_by_strm_q90}
+cfs_slp |> 
+  drop_na(wood_class) |> 
+  ggplot(aes(cfs_q90, n, group = site, color = strm)) +
+  geom_point(size = 0.5, alpha = 0.4, show.legend = F) +
+  geom_smooth(se = F, method = "lm", linewidth = 0.4, show.legend = F) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  scale_x_log10() +
+  facet_wrap(wood_class ~ strm, nrow = 3, labeller = label_wrap_gen(multi_line = F), scales = "free") +
+  theme(axis.text = element_text(size = 6))
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/f_wood_class_q90_by_strm_scatter.png", width = 14, height = 11, bg = "white", dpi = 100)
+```
+
+For max: ST small size seems to show similar positive corr as other streams to q90
+Hard to see 'across site' 'whole stream' reln for other sizes/stream, except BBC small (possibly leveraged by large peaks?)
+But following fit-lines only (accepting possibly poor fits) showing negative corr for L in ST and probably LC and maybe HC
+
+```{r scatter_by_strm_max}
+cfs_slp |> 
+  drop_na(wood_class) |> 
+  ggplot(aes(cfs_max, n, group = site, color = strm)) +
+  geom_point(size = 0.5, alpha = 0.4, show.legend = F) +
+  geom_smooth(se = F, method = "lm", linewidth = 0.4, show.legend = F) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  scale_x_log10() +
+  facet_wrap(wood_class ~ strm, nrow = 3, labeller = label_wrap_gen(multi_line = F), scales = "free") +
+  theme(axis.text = element_text(size = 6))
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/f_wood_class_max_by_strm_scatter.png", width = 14, height = 11, bg = "white", dpi = 100)
+```
+
+this is getting towards better
+```{r f_scatter_by_strm_both_lm_only}
+cfs_slp |> 
+  drop_na(wood_class) |> 
+  ggplot(aes(group = site, color = strm)) +
+  #geom_point(size = 0.5, alpha = 0.4, show.legend = F) +
+  geom_smooth(aes(cfs_max, n), linetype = 1, se = F, method = "lm", linewidth = 0.4, show.legend = F) +
+  geom_smooth(aes(cfs_q90, n), linetype = 3, se = F, method = "lm", linewidth = 0.4, show.legend = F) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  scale_x_log10() +
+  facet_wrap(wood_class ~ strm, nrow = 3, labeller = label_wrap_gen(multi_line = F), scales = "free") +
+  theme(axis.text = element_text(size = 6))
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/f_wood_class_both_lm_only_by_strm_scatter.png", width = 14, height = 11, bg = "white", dpi = 100)
+
+```
+
+and this is better yet?
+```{r f_kendalltau_per_site_bystrm}
+cfs_slp |> 
+  drop_na(wood_class) |> 
+  summarise(
+    across(c(bnk_wdth_mean), list(mean = ~mean(., na.rm = T)))
+    ,
+    across(
+      c(cfs_q90, cfs_max), 
+      list(
+        k = ~cor(., n, use = "pairwise.complete.obs", method = "kendall")
+        ,
+        kpv = ~cor.test(., n, use = "pairwise.complete.obs", method = "kendall", alternative = "two")$p.value
+        )
+    )
+    ,
+    .by = c(strm, site, wood_class)
+  ) |>
+  pivot_longer(cols = contains("cfs")) |> 
+  mutate(
+    var = str_split_i(name, "_", 3),
+    name = str_sub(name, 1, 7)
+  ) |> 
+  pivot_wider(names_from = var, values_from = value) |> 
+
+  ggplot(aes(k, strm, color = strm, shape = name, size = cut(bnk_wdth_mean_mean, breaks = c(0,5,10,15,30)))) +
+  geom_vline(xintercept = c(-0.5,0,0.5)) +
+  geom_jitter(aes(alpha = kpv < 0.05), show.legend = F) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  scale_alpha_manual(values = c(0.15,0.9)) +
+  facet_wrap(~wood_class + name, ncol = 2)
+
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/f_wood_class_both_kendalltau_by_strm_jitter.png", width = 14, height = 11, bg = "white", dpi = 100)
+```
+
+fit per-site GAMs? 
+```{r lm_fits}
+cfs_slp |> 
+    drop_na(wood_class) |> 
+  nest(.by = c(strm, site, wood_class)) |> 
+  summarise(
+    lm = map(data, ~lm(n ~ cfs_q90 + cfs_max, data = .x) |> broom::tidy())
+    ,
+    .by = c(strm, site, wood_class)
+  ) |> 
+  unnest(lm) |> 
+  filter(
+    str_detect(term, "cfs"),
+    p.value < 0.1
+  ) |> 
+  arrange(p.value)
+
+cfs_slp |> filter(site == "GER020") |> ggplot(aes(cfs_max, n, color = wood_class)) + geom_point() + facet_wrap(~wood_class, scales = "free")
+
+```
+
+
+Next: do d_wood ~ Q, expecting sideways 'V' or 'C' shape scatter 
+
+Does indeed look to be the pattern...at least in some streams & size classes...but possibly also some pattern being obscured by blending COMIDs/spatial network areas - for example, Germany is showing negative slope pooled across flows, but there looks to be almost a 'sawtooth' of double positive reln
+
+NEEDS RESTRATIFYING BY DA or BFW
+
+```{r}
+cfs_slp |> 
+  drop_na(wood_class) |> 
+  mutate(
+    across(
+      c(n),
+      list(
+        dl1 = ~(. - lag(.))
+        #,dl1_pct = ~(. - lag(.))/lag(.)
+        ))
+    , .by = c(site, wood_class)
+  ) |> 
+  select(strm, site, dasqkm_tot:cfs_max, bnk_wdth_mean, wood_class, starts_with("n", ignore.case = F)) |> 
+  drop_na(n_dl1) |> 
+  # ggplot(aes(cfs_max, n_dl1, color = strm)) +
+  # geom_point(size = 0.5, alpha = 0.5, show.legend = F) +
+  ggplot(aes(cfs_max, abs(n_dl1), color = strm)) +
+  geom_point(size = 0.5, alpha = 0.5, show.legend = F) +
+  geom_quantile(quantiles = c(0.5, 0.95, 0.99), 
+                aes(linetype = after_stat(factor(quantile))),
+                show.legend = F) +
+  scale_x_log10() +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  facet_wrap(~wood_class + strm, nrow = 3, scales = "free")
+
+#ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/f_wood_class_dl1_vs_max_by_strm.png", width = 14, height = 11, bg = "white", dpi = 100)
+
+```
 
