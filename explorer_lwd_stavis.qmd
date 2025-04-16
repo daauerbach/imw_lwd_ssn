@@ -1754,3 +1754,160 @@ cfs_slp |>
 
 ```
 
+Not yet fully statisfying but adding bnk_class stratification and grouping fits by site helps to clarify the x-axis per-comid-separation and distinguish from between-year-separation due to very large peak flow values
+Better approach needs to fit better model than geom_smooth/geom_quantile?
+
+```{r}
+d <- cfs_slp |> 
+  drop_na(c(wood_class, bnk_wdth_mean)) |>
+  mutate(
+    across(
+      c(n),
+      list(
+        dl1 = ~(. - lag(.))
+        #,dl1_pct = ~(. - lag(.))/lag(.)
+        ))
+    , .by = c(site, wood_class)
+  ) |> 
+  select(strm, site, comid, dasqkm_tot:cfs_max, bnk_wdth_mean, wood_class, starts_with("n", ignore.case = F)) |> 
+  drop_na(n_dl1) |> 
+  # #sites 'switch class' if bankfull_class assigned per year
+  # summarise(across(bnk_wdth_mean, list(min = ~min(.), mean = ~mean(.), max = ~max(.))), .by = site)
+  mutate(
+    bnk_wdth_mean_mean = mean(bnk_wdth_mean), .by = site
+  ) |> 
+  mutate(
+    bnk_class = cut(bnk_wdth_mean_mean, breaks = c(0,5,10,25))    
+  ) #distinct(site, bnk_class)
+  
+d |>
+  nest(.by = c(site, wood_class, bnk_class)) |> 
+  summarise(
+    lm_pv = map_dbl(data, ~broom::glance(lm(log10(0.01 + abs(n_dl1)) ~ log10(0.01 + cfs_max), data = .x))$p.value)
+    ,
+    .by = c(site, wood_class, bnk_class)
+  ) |>
+  filter(lm_pv < 0.05) |> 
+  pivot_wider(names_from = wood_class, values_from = lm_pv) |> 
+  arrange(site) |> print(n=Inf) |> 
+  summarise(across(where(is.numeric), list(nsig = ~sum(!is.na(.)))))
+
+d |>  filter(site == "BIB007") |> ggplot(aes(cfs_max, abs(n_dl1), color = wood_class)) + geom_point() + facet_wrap(~wood_class, nrow = 3, scales = "free")
+d |>  filter(site == "BIB007") |> ggplot(aes(log10(0.01 + cfs_max), log10(0.01 + abs(n_dl1)), color = wood_class)) + geom_point() + facet_wrap(~wood_class, nrow = 3, scales = "free")
+
+## can draw lots of fit lines but doesn't mean they're any good...
+
+d |> 
+#  filter(str_detect(strm, "\\*")) |> 
+#  filter(str_detect(strm, "East")) |> 
+#  filter(str_detect(strm, "Twin")) |> 
+  filter(str_detect(strm, "Stavis")) |> filter(wy > 2008) |> 
+  ggplot(aes(cfs_max, abs(n_dl1), color = strm, group = site)) +
+  geom_point(size = 0.5, alpha = 0.5, show.legend = F) +
+  #geom_smooth(method = "lm", se = F, linewidth = 0.3) +
+#worth noting the loess fit squiggle!
+  geom_smooth(span = 1.3, se = F, linewidth = 0.3) +
+  # geom_quantile(
+  #   formula = y ~ x,
+  #   quantiles = c(0.99, 0.5),
+  #   #quantiles = c(0.99),
+  #   aes(linetype = after_stat(factor(quantile))),
+  #   show.legend = F) +
+  scale_x_log10() + 
+  scale_y_log10() +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  facet_wrap(~wood_class + bnk_class, nrow = 3, scales = "free")
+
+```
+
+```{r}
+# d |> 
+# #  filter(str_detect(strm, "\\*")) |> 
+# #  filter(str_detect(strm, "East")) |> 
+# #  filter(str_detect(strm, "Twin")) |> 
+#   filter(str_detect(strm, "Stavis")) |> #filter(wy > 2008) |> 
+#   ggplot(aes(cfs_max, n_dl1, color = strm, group = site)) +
+#   geom_point(size = 0.5, alpha = 0.5, show.legend = F) +
+#   scale_x_log10() + #scale_y_log10() +
+#   scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+#   facet_wrap(~wood_class + bnk_class, nrow = 3, scales = "free")
+
+d |> 
+  split(~strm) |> 
+  `[`(x = _, j = c(1,3)) |>
+  map(
+    ~.x |> 
+      filter(wood_class != "S") |> 
+      mutate(site = fct_reorder(site, bnk_wdth_mean_mean, min)) |> 
+      ggplot(aes(cfs_max, n_dl1, shape = wood_class, color = strm, group = site)) +
+      geom_point(size = 0.7, alpha = 0.8, show.legend = F) +
+      scale_x_log10() + #scale_y_log10() +
+      scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+      #facet_wrap(~wood_class + site, nrow = 3, labeller = label_wrap_gen(multi_line = F), scales = "free") +
+      facet_wrap(~comid, nrow = 1, labeller = label_wrap_gen(multi_line = F), scales = "free") +
+      theme(axis.text = element_text(size = 6))
+  )
+
+```
+
+no good reason to expect linear (log or not) increase in count delta with flow
+seems plausibly episodic and/or threshold-effect driven
+invert the question, asking 'for X change what was the character of Y wy-flow?'
+seems like the largest changes should accompany large peak years...that follow smaller peak years?
+
+```{r}
+#the magnitudes of change reflect the known between-complex/stream variation in 'wood load'
+#with ST considerably 'woodier' and with more & larger changes
+#Stavis sort of middle ground, the remainder of HC and LC fairly close
+d |> 
+  ggplot(aes(fill = strm)) + 
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  stat_ecdf(aes(n_dl1, color = strm)) +
+  facet_wrap(~wood_class, ncol = 3, labeller = label_wrap_gen(multi_line = F), scales = "free")
+
+d |> 
+  filter(wood_class != "S") |> 
+  ggplot(aes(fill = strm)) + 
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_histogram(aes(n_dl1), color = "grey30", binwidth = 1, show.legend = F) +
+  facet_wrap(~strm + wood_class, ncol = 2, labeller = label_wrap_gen(multi_line = F))
+
+#another nice way to see that [differences in character of changes at a stream-scale, pooling across sites]
+d |> 
+  filter(wood_class != "S") |> 
+  ggplot(aes(fill = strm)) + 
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  #geom_vline(xintercept = c(-20, -10, 10, 20), linetype = rep(c(3,2,2,3),2)) +
+  geom_vline(xintercept = c(-15, 15), linetype = 3) +
+  ggridges::geom_ridgeline(aes(n_dl1, strm), stat = "binline", binwidth = 1, scale = 5, show.legend = F) +
+  facet_wrap(~wood_class, ncol = 2, labeller = label_wrap_gen(multi_line = F))
+
+#but we know some sites are more/less variable
+#what about drilling into the changes per site?
+#Not bad!
+#shows clearly that tails of whole-stream change distribution (i.e., big/small mag shifts) 
+#are associated with a relatively small subset of sites, and not strictly those with the most wood 'on avg'
+#for example DEW147, DEW332; several in Stavis 
+d |> 
+  filter(wood_class != "S") |> 
+  summarise(
+    across(n, list(mean = ~mean(., na.rm=T))),
+    across(n_dl1, list(min = ~min(., na.rm = T), mean = ~mean(., na.rm=T), max = ~max(., na.rm = T))),
+    .by = c(strm, site, wood_class)
+  ) |> 
+  mutate(site = fct_reorder(site, n_mean, min), .by = strm) |> 
+  ggplot(aes(color = strm)) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_linerange(aes(x = n_dl1_mean, xmin = n_dl1_min, xmax = n_dl1_max, y = site, linetype = wood_class), position = position_dodge(width = 0.3), show.legend = F) +
+  geom_vline(xintercept = c(-15, 15), linetype = 3) +
+  facet_wrap(~strm, ncol = 10, labeller = label_wrap_gen(multi_line = F), scales = "free_y") +
+  labs(
+    title = "Range of per-year change in wood counts by wood size class, per site per stream",
+    subtitle = "sites ordered by mean count; M: solid, L: dashed"
+    ) + 
+  theme(axis.text = element_text(size = 6))
+
+
+
+```
+
