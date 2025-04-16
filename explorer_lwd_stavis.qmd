@@ -1907,7 +1907,111 @@ d |>
     ) + 
   theme(axis.text = element_text(size = 6))
 
+d |> 
+  filter(wood_class != "S") |> 
+  summarise(
+    across(n, list(mean = ~mean(., na.rm=T))),
+    across(n_dl1, list(min = ~min(., na.rm = T), mean = ~mean(., na.rm=T), max = ~max(., na.rm = T))),
+    .by = c(strm, site, wood_class)
+  ) |> 
+  mutate(site = fct_reorder(site, n_dl1_mean, min), .by = strm) |> 
+  ggplot(aes(color = strm)) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  geom_point(aes(x = n_dl1_mean, y = site, shape = wood_class), position = position_dodge(width = 0.3), size = 1, show.legend = F) +
+  geom_vline(xintercept = c(-10, 0, 10), linetype = 3) +
+  facet_wrap(~strm, ncol = 10, labeller = label_wrap_gen(multi_line = F), scales = "free_y") +
+  labs(
+    #title = "Range of per-year change in wood counts by wood size class, per site per stream",
+    subtitle = "sites ordered by mean change; M: solid, L: dashed"
+    ) + 
+  theme(axis.text = element_text(size = 6))
 
+#stavis 'keystone'
+dL <- d |> 
+  filter(wood_class == "L") |> 
+  summarise(
+    across(n, list(mean = ~mean(., na.rm=T))),
+    across(n_dl1, list(min = ~min(., na.rm = T), mean = ~mean(., na.rm=T), max = ~max(., na.rm = T))),
+    .by = c(strm, site, wood_class)
+  ) |> 
+  mutate(site = fct_reorder(site, n_dl1_mean, min), .by = strm) |> 
+  mutate(
+    wood_mean_change = case_when(
+      n_dl1_mean > 0 ~ "increase",
+      n_dl1_mean == 0 ~ "no_net_chg",
+      n_dl1_mean < 0 ~ "decrease"
+      )
+    ) |> 
+  arrange(site)
+
+{
+dL |> 
+  filter(str_detect(strm, "Stavis")) |> 
+  ggplot(aes(color = strm)) +
+  #scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  #geom_point(aes(x = n_dl1_mean, y = site, shape = wood_class), position = position_dodge(width = 0.3), size = 1, show.legend = F) +
+    geom_point(aes(x = n_dl1_mean, y = site, shape = wood_mean_change, fill = wood_mean_change, size = abs(n_dl1_mean)),
+               position = position_dodge(width = 0.3), color = "grey30", show.legend = F) +
+    scale_fill_manual(values = c("increase"="#3A270A", "decrease"="blue","no_net_chg"="#D3BEAF")) +
+    scale_shape_manual(values = c("increase"=24, "decrease"=25, "no_net_chg"=1) ) +
+    scale_size_area() +
+  geom_vline(xintercept = c(-5, 0, 5), linetype = 3) +
+  facet_wrap(~strm, ncol = 10, labeller = label_wrap_gen(multi_line = F), scales = "free_y") +
+  labs(
+    title = "Mean per-year change in 'keystone' wood pieces per site",
+    subtitle = "sites ordered by mean change", y = NULL
+    ) + 
+  theme(axis.text = element_text(size = 6))
+}+{
+  ggplot() + 
+    geom_sf(data = semi_join(sf_site_nhdp, filter(d, str_detect(strm, "Stavis")), by = "comid"), alpha = 0.5) + 
+    #  geom_sf_text(data = semi_join(sf_site_nhdp, d, by = "comid"), aes(label = comid), color = "blue", size = 6) +
+    geom_sf(data = filter(sf_edges, str_detect(strm, "Stavis")), color = "lightblue") + 
+    geom_sf_text(data = filter(sf_site_meta, str_detect(strm, "Stavis")), aes(label = site), size = 3, nudge_y = 10) + 
+    geom_sf(
+      data = inner_join(sf_site_meta, filter(dL, str_detect(strm, "Stavis")), by = c("strm","site"))
+      ,
+      #mapping = aes(shape = n_dl1_mean < 0, fill = n_dl1_mean < 0, size = abs(n_dl1_mean))
+      mapping = aes(shape = wood_mean_change, fill = wood_mean_change, size = abs(n_dl1_mean))
+      , color = "grey30"
+    ) +
+    scale_fill_manual(values = c("increase"="#3A270A", "decrease"="blue","no_net_chg"="#D3BEAF")) +
+    scale_shape_manual(values = c("increase"=24, "decrease"=25,"no_net_chg"=1) ) +
+    scale_size_area() +
+    labs(x = NULL, y = NULL) +
+    theme(axis.text = element_text(size = 6))
+}+{
+  filter(d, str_detect(strm, "Stavis"), wood_class == "L") |> #filter(site == "STA070")
+    mutate(site = factor(site, levels = levels(dL$site))|> fct_rev()) |> 
+    ggplot() +
+    geom_col(aes(wy, n_dl1, fill = n_dl1 < 0), show.legend = F) +
+    scale_fill_manual(values = c("#3A270A", "blue")) +
+    facet_wrap(~site, ncol = 1, strip.position = "right") +
+    theme(strip.text = element_text(size = 5), axis.text = element_text(size = 5))
+}
+
+#need to check with Will...  
+wood_sy_sml |> filter(site == "STA070") |> filter(wood_class=="L")
+d |> filter(site == "STA006") |> filter(wood_class=="L")
+
+filter(d, str_detect(strm, "Stavis"), wood_class == "L") |> #filter(site == "STA070")
+  mutate(site = factor(site, levels = levels(dL$site))|> fct_rev()) |> 
+  #left_join(dL |> mutate(site_f = site) |> select(site, site_f), by = "site")
+  ggplot(aes(wy, n)) +
+  geom_line(linewidth = 0.5) + geom_point(size = 0.7) +
+  facet_wrap(~site, ncol = 1, strip.position = "right")
+
+
+
+
+d |> 
+  filter(wood_class != "S") |> 
+  summarise(
+    across(n, list(mean = ~mean(., na.rm=T))),
+    across(n_dl1, list(min = ~min(., na.rm = T), mean = ~mean(., na.rm=T), max = ~max(., na.rm = T))),
+    .by = c(strm, site, wood_class)
+  ) |> 
+  count(strm, wood_class, n_dl1_max > 10) |> pivot_wider(names_from = `n_dl1_max > 10`, values_from = n)
 
 ```
 
