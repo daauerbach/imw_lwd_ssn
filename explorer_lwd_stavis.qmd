@@ -2384,5 +2384,258 @@ bind_rows(
   labs(x = NULL, y = NULL) +
   theme(panel.background = element_rect(fill = "grey90"))
 
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_dy1_mad_lm_physio_by_wood_class_strm.png", width = 11, height = 8, bg = "white", dpi = 150)
+
 ```
+
+check simple sd - if pattern for diffs, should also be for standard dev? YES
+
+```{r wood_sy_sml_nwm_SD_lm}
+wood_sy_sml_nwm_sd <- wood_sy_sml_nwm |> 
+  left_join(site_meta |> select(cmplx_abrv, cmplx_strm, site), by = "site") |> 
+  summarise(
+    across(
+      ends_with("_m2")
+      ,
+      list(
+        sd = ~sd(., na.rm = T)
+      )),
+    .by = c(cmplx_abrv, cmplx_strm, strm, site)
+  ) |> 
+  mutate(
+    across(ends_with("sd"), list(log = ~log(.)))
+  ) |> 
+  left_join(as_tibble(sf_edges) |> select(site, dasqkm_tot:upDist), by = "site") |> 
+  arrange(strm)
+
+# not quite as strong for some strm-woodclass combos, but definitely some apparently valid reln, esp for S
+wood_sy_sml_nwm_sd |> 
+  # select(strm, site, dasqkm_tot, ends_with("sd")) |>
+  # pivot_longer(ends_with("sd")) |>
+  select(strm, site, dasqkm_tot, ends_with("sd_log")) |>
+  pivot_longer(ends_with("sd_log")) |>
+  ggplot(aes(dasqkm_tot, value, color = strm)) +
+  geom_point(show.legend = F) +
+  ggpmisc::stat_poly_line(color = "blue") +
+  ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  facet_wrap(~name + strm, nrow = 3, scales = "free")
+
+wood_sy_sml_nwm_sd_lm <- wood_sy_sml_nwm_sd |> 
+  nest(.by = strm) |> 
+  mutate(
+    lm_S = map(data, ~lm(n_S_m2_sd ~ dasqkm_tot + slope + elev_min + upDist, data = .x)),
+    lm_M = map(data, ~lm(n_M_m2_sd ~ dasqkm_tot + slope + elev_min + upDist, data = .x)),
+    lm_L = map(data, ~lm(n_L_m2_sd ~ dasqkm_tot + slope + elev_min + upDist, data = .x))
+  )
+
+#and yes, some plausible fits (stronger for S in several streams)
+wood_sy_sml_nwm_sd_lm |>
+  mutate(
+    lm_S_smry = map(lm_S, ~broom::glance(.x) |> select(r.squared, p.value) |> rename_with(~paste0("S_",.))),    
+    lm_M_smry = map(lm_M, ~broom::glance(.x) |> select(r.squared, p.value) |> rename_with(~paste0("M_",.))),   
+    lm_L_smry = map(lm_L, ~broom::glance(.x) |> select(r.squared, p.value) |> rename_with(~paste0("L_",.)))    
+  ) |> unnest(ends_with("smry")) |> arrange(strm)
+
+bind_rows(
+  wood_sy_sml_nwm_sd_lm |>
+    mutate(lm_S_coef = map(lm_S, ~broom::tidy(.x))) |> unnest(lm_S_coef) |> select(strm, term, p.value) |> mutate(wood_class = "S"),
+  wood_sy_sml_nwm_sd_lm |>
+    mutate(lm_M_coef = map(lm_M, ~broom::tidy(.x))) |> unnest(lm_M_coef) |> select(strm, term, p.value) |> mutate(wood_class = "M"),
+  wood_sy_sml_nwm_sd_lm |>
+    mutate(lm_L_coef = map(lm_L, ~broom::tidy(.x))) |> unnest(lm_L_coef) |> select(strm, term, p.value) |> mutate(wood_class = "L")
+  ) |> 
+#pivot_wider(names_from = term, values_from = `p.value`) |> 
+  ggplot(aes(term, fct_rev(strm), 
+             #size = 1-p.value, 
+             size = cut(1-p.value, breaks = c(0, 0.9, 0.95, 0.99, 0.999, 1)),
+             color = p.value < 0.05, 
+             shape = p.value < 0.05
+             )) +
+  geom_point(show.legend = F) +
+  #scale_size_binned(breaks = c(0, 0.9, 0.95, 0.99, 0.999, 1), range = c(0.2, 3)) +
+  geom_text(aes(label = round(p.value, 4)), nudge_y = 0.2, size = 4, show.legend = F) +
+  geom_text(
+    data = wood_sy_sml_nwm_sd_lm |>
+      mutate(
+        lm_S_smry = map(lm_S, ~broom::glance(.x) |> select(r.squared, p.value) |> rename_with(~paste0("S_",.))),    
+        lm_M_smry = map(lm_M, ~broom::glance(.x) |> select(r.squared, p.value) |> rename_with(~paste0("M_",.))),   
+        lm_L_smry = map(lm_L, ~broom::glance(.x) |> select(r.squared, p.value) |> rename_with(~paste0("L_",.)))    
+      ) |> unnest(ends_with("smry")) |> arrange(strm) |> select(strm, ends_with("squared")) |> 
+      pivot_longer(-strm, names_to = "wood_class", values_to = "r2") |> 
+      mutate(wood_class = str_sub(wood_class,1,1), r2 = round(r2, 2))
+    ,
+    aes(x = 3, y = fct_rev(strm), label = paste("r^2 =", r2)), inherit.aes = F, nudge_y = 0.4
+  ) +
+  scale_x_discrete(position = "top") +
+  facet_wrap(~wood_class, nrow = 1) +
+  labs(x = NULL, y = NULL) +
+  theme(panel.background = element_rect(fill = "grey90"))
+
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_sd_lm_physio_by_wood_class_strm.png", width = 11, height = 8, bg = "white", dpi = 150)
+
+## examining sample distrib for norm (plots contrast nonlogged with logged)
+wood_sy_sml_nwm_sd |> 
+  pivot_longer(starts_with("n_"), names_to = "wood_class", values_to = "val") |> #summary()
+  filter(!is.infinite(val)) |> #drop BIB010 and BIB012 from 'L'
+  ggplot(aes(fill = strm)) + 
+
+  #  ggridges::geom_ridgeline(aes(val, strm, group = strm), alpha = 0.8, stat = "binline", scale = 0.5, bins = 40, show.legend = F) +
+## nice/helpful
+  #  geom_density(aes(val), alpha = 0.8, show.legend = F) +
+## also nice/helpful
+## log improves many/most but not in all streams for all wood_classes
+  stat_qq(aes(sample = val, color = strm), show.legend = F) + stat_qq_line(aes(sample = val, color = strm), show.legend = F) +
+
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  facet_wrap(~wood_class + strm, nrow = 6, labeller = label_wrap_gen(multi_line = F), scales = "free")
+
+## switching to log response
+wood_sy_sml_nwm_sd_log_lm <- wood_sy_sml_nwm_sd |>
+  filter(!is.infinite(n_L_m2_sd_log)) |> #drop BIB010 and BIB012 from 'L'
+  nest(.by = c(cmplx_abrv, cmplx_strm, strm)) |> 
+  mutate(
+    lm_S = map(data, ~lm(n_S_m2_sd_log ~ dasqkm_tot + slope + elev_min + upDist, data = .x)),
+    lm_M = map(data, ~lm(n_M_m2_sd_log ~ dasqkm_tot + slope + elev_min + upDist, data = .x)),
+    lm_L = map(data, ~lm(n_L_m2_sd_log ~ dasqkm_tot + slope + elev_min + upDist, data = .x))
+  )
+
+#still plausible fits, some arguably better without even considering distributional reasons
+wood_sy_sml_nwm_sd_log_lm |>
+  mutate(
+    lm_S_smry = map(lm_S, ~broom::glance(.x) |> select(r.squared, p.value) |> rename_with(~paste0("S_",.))),    
+    lm_M_smry = map(lm_M, ~broom::glance(.x) |> select(r.squared, p.value) |> rename_with(~paste0("M_",.))),   
+    lm_L_smry = map(lm_L, ~broom::glance(.x) |> select(r.squared, p.value) |> rename_with(~paste0("L_",.)))    
+  ) |> unnest(ends_with("smry")) |> arrange(strm)
+
+
+wood_sy_sml_nwm_sd_log_lm |>
+  mutate(
+    #lm_fitted = map(lm_L, ~fitted(.x)), lm_resid = map(lm_L, ~residuals(.x))
+    lm_fitted = map(lm_M, ~fitted(.x)), lm_resid = map(lm_M, ~residuals(.x))
+    ) |> 
+  unnest(c(lm_fitted, lm_resid)) |> 
+  ggplot(aes(lm_fitted, lm_resid, color = strm)) + geom_point(show.legend = F) + 
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
+  facet_wrap(~strm, nrow = 2, scales = "free")
+
+#beautiful
+plot(performance::check_model(wood_sy_sml_nwm_sd_log_lm$lm_L[[1]])) + plot_annotation(title = wood_sy_sml_nwm_sd_log_lm$strm[1])
+
+#double map prevents double plotting before the reduced version
+map(
+  1:4, #nrow(wood_sy_sml_nwm_sd_log_lm),
+  ~performance::check_model(wood_sy_sml_nwm_sd_log_lm$lm_L[[.x]]) 
+) |>
+  map(~plot(.x, n_columns = 6)) |> 
+  reduce(`/`) + plot_annotation(tag_levels = list(rep(wood_sy_sml_nwm_sd_log_lm$strm[1:4], each = 6)))
+
+
+```
+
+```{r test_brms_hier}
+#trying from: https://chatgpt.com/share/6802ad1a-07b0-8003-b161-e3ea9131a407
+#modified to try starting with linear fixed effects and streams within complexes as nested random effects
+
+library(brms)
+
+# Optional: set informative or weakly informative priors
+priors <- c(
+  prior(normal(0, 1), class = "b"),                    # for fixed effects
+  prior(student_t(3, 0, 2.5), class = "Intercept"),    # intercept
+  prior(cauchy(0, 1), class = "sd")                    # for random effects
+)
+
+fit <- brm(
+  formula = n_L_m2_sd_log ~ 
+    #s(dasqkm_tot) + s(slope) + s(elev_min) + 
+    dasqkm_tot + slope + elev_min + 
+    (1 | cmplx_abrv/strm)
+  ,   # nested random effects
+  data = wood_sy_sml_nwm_sd |> #summary()
+    filter(is.finite(n_L_m2_sd_log)) |> #BIB010 & BIB012
+    drop_na(dasqkm_tot) #SEA064
+  ,
+  family = gaussian(),
+  prior = priors,
+  chains = 2,
+  cores = 2,
+  iter = 1000,
+  control = list(adapt_delta = 0.95),
+  seed = 123
+)
+
+summary(fit)             # parameter estimates
+plot(fit)                # smooths and residuals
+pp_check(fit)            # posterior predictive checks
+loo(fit)                 # leave-one-out CV
+conditional_effects(fit) # plot smooths with uncertainty
+ranef(fit)
+
+#trying to think through interpretation of backtransformed
+-5.71 + -0.04*20 |> exp()
+#for each additional sqkm DA, the log of sd of density decreases 0.04...dependent on cmplx/strm/slope/elev?
+plot(1:75, -5.71 + -0.04*1:75, type = "l")
+plot(1:75, exp(-5.71 + -0.04*1:75), type = "l")
+
+nd <-wood_sy_sml_nwm_sd |> #summary()
+  distinct(cmplx_abrv, strm) |> 
+  mutate(slope = 0.05, elev_min = 125) |> 
+  expand_grid(dasqkm_tot = seq(1,60, by = 5))
+nd <- as_tibble(cbind(nd,  predict(fit, nd)))
+  
+
+wood_sy_sml_nwm_sd |> 
+  #ggplot(aes(dasqkm_tot, n_L_m2_sd_log)) + geom_point(size = 0.7)
+  ggplot(aes(dasqkm_tot, n_L_m2_sd)) + geom_point(size = 0.7) + 
+  geom_hline(yintercept = exp(-5.71 + -0.04*20)) +
+  geom_line(
+    data = tibble(dasqkm_tot = 1:75, n_L_m2_sd = exp(-5.71 + -0.04*dasqkm_tot)), color = "orange"
+  ) +
+  geom_line(
+    data = nd, aes(y = exp(Estimate), color = strm)
+  ) +
+  scale_fill_manual(values = pal_strm, aesthetics = c("color","fill"))
+
+```
+
+map sd of density
+
+```{r map_m2_sd}
+#quick and ugly
+sf_site_meta |> 
+  select(cmplx_abrv, strm, site) |> 
+  inner_join(
+    wood_sy_sml_nwm_sd |> select(site, ends_with("m2_sd"))
+    , by = "site") |>
+  pivot_longer(ends_with("_sd")) |> 
+split(~strm) |> 
+  map(
+    ~.x |> ggplot() +
+  geom_sf(aes(size = value)) +
+  scale_size_area() +
+  facet_wrap(~name, nrow = 3, drop = T) +
+    labs(subtitle = .x$strm[1]) +
+    theme(axis.text = element_blank())
+    ) |> 
+  wrap_plots(ncol = 10)
+
+```
+
+
+Prelim finding: basic physiographic/network-position measures can account for much of the variation in the magnitude of interannual variation in 'large' wood, distinguishing the smaller 'ongoing churn' size pieces from the 'keystone' very large pieces; complemented with NWM peak flow correlations for S vs M/L
+
+Next
+  - SD vs median abs diff vs mean abs diff
+  - Hierarchical? 
+  - rstanarm?
+
+gamma, lognorm
+glmmTMBm, brms,
+
+prompts have useful text:
+
+I'm a researcher analyzing a dataset with a response measure that is the standard deviation through time of per-year densities (i.e., the standard deviation of 15 years of count-per-area) at 25-30 sites across 10 different locations. Differences in this `sd` response indicate differences in the per-site volatility across years. The sample distributions across sites of this `sd` response are not perfectly Gaussian, but neither are they plainly bimodal or otherwise strongly non-normal. How would you suggest modeling this response? I'm especially interested in 1) what error distribution family to use and 2) whether to fit separately for each location or to pool with location as a fixed or random effect or to use a hierarchical structure. 
+
+Those were both very helpful responses, thank you. In this analysis, the 25-30 sites are indeed nested within 10 distinct streams and their encompassing watersheds, but these 10 streams are further grouped within 3 'complexes' in different physiographic regions with known climatic, geologic, and land use variation. So the hierarchical structure, from top to bottom is actually 3 'complexes', with 10 streams split 3-3-4 across complexes, and with 25-30 sites per stream (and with 10-18 years of observations at each site, from which I'm calculating the per-site standard deviation). I've inspected QQ for log(sd), and it looks to bring most streams tolerably 'close to normal'. For now, assuming that I proceed with a log(sd) response, I'm interested in pursuing a hierarchical structure that includes site-level covariates for factors such as per-site slope (i.e., longitudinal gradient) and drainage area and elevation. I can see reasonably strong univariate linear relationships with several of my covariates, and separate models per stream of `log(sd) ~ dasqkm + slope + elev` have decent fit and performance statistics but suggest some nonlinearity (which is reasonable and expected). I know that there are "substantial, interpretable differences" in both response and covariates among complexes, among individual streams within complexes (the 'locations'), and among sites within streams. I'm interested in explaining patterns within these particular streams, but I'm also very interested in generalizing from them to the broader population of regional streams & watersheds. I'm quite open to a Bayesian approach (e.g., `rstanarm` or `brms` and/or something coded in `glmmTMB` or a different package. 
 
