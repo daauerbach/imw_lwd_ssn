@@ -2023,7 +2023,10 @@ wood_sy_sml_nwm <- wood_sy_sml |>
     mutate(
     across(
       starts_with("n"),
-      list(m2 = ~. / lgth_wdth)
+      list(
+        m2 = ~. / lgth_wdth,
+        `1000m2` = ~1000*(. / lgth_wdth)
+        )
     ),
     .by = site
   ) |> 
@@ -2388,21 +2391,27 @@ ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_dy1_mad_lm_ph
 
 ```
 
-check simple sd - if pattern for diffs, should also be for standard dev? YES
 
-```{r wood_sy_sml_nwm_SD_lm}
+
+check simple sd - if pattern for diffs, should also be for standard dev? YES
+[but in retrospect is arguably mostly pattern in mean, since sd strongly pos corr with mean]
+```{r wood_sy_sml_nwm_sd}
 wood_sy_sml_nwm_sd <- wood_sy_sml_nwm |> 
   left_join(site_meta |> select(cmplx_abrv, cmplx_strm, site), by = "site") |> 
   summarise(
     across(
-      ends_with("_m2")
-      ,
+      #ends_with("_m2"),
+      ends_with("m2"), 
       list(
+        mu = ~mean(., na.rm = T),
         sd = ~sd(., na.rm = T)
       )),
     .by = c(cmplx_abrv, cmplx_strm, strm, site)
   ) |> 
   mutate(
+    n_S_1000m2_cv = n_S_1000m2_sd / n_S_1000m2_mu,
+    n_M_1000m2_cv = n_M_1000m2_sd / n_M_1000m2_mu,
+    n_L_1000m2_cv = n_L_1000m2_sd / n_L_1000m2_mu,
     across(ends_with("sd"), list(log = ~log(.)))
   ) |> 
   left_join(as_tibble(sf_edges) |> select(site, dasqkm_tot:upDist), by = "site") |> 
@@ -2420,7 +2429,9 @@ wood_sy_sml_nwm_sd |>
   ggpmisc::stat_poly_eq(ggpmisc::use_label(c("adj.R2", "p")), color = "blue") +
   scale_fill_manual(values = pal_strm, aesthetics = c("color","fill")) +
   facet_wrap(~name + strm, nrow = 3, scales = "free")
+```
 
+```{r wood_sy_sml_nwm_SD_lm}
 wood_sy_sml_nwm_sd_lm <- wood_sy_sml_nwm_sd |> 
   nest(.by = strm) |> 
   mutate(
@@ -2533,7 +2544,9 @@ map(
 
 ```
 
-```{r test_brms_hier}
+trying various packages and formulas/model specifications, 
+nothing actually usable but helpful to see and think about alternatives
+```{r test_brms_hier_SD}
 #trying from: https://chatgpt.com/share/6802ad1a-07b0-8003-b161-e3ea9131a407
 #modified to try starting with linear fixed effects and streams within complexes as nested random effects
 
@@ -2599,7 +2612,687 @@ wood_sy_sml_nwm_sd |>
 
 ```
 
-map sd of density
+
+
+```{r wood_sy_sml_nwm_cmplt}
+#need to expand_grid year to make missing explicit
+#and drop SEA064 as apparently not linked to NHDplusHR 
+#this creates many per-year repeats of the fixed site attributes da, slope, elev
+(wood_sy_sml_nwm_cmplt <- wood_sy_sml_nwm |> 
+   left_join(site_meta |> select(cmplx_abrv, cmplx_strm, site), by = "site") |> 
+   group_by(cmplx_abrv, cmplx_strm, strm, site) |> 
+   complete(year = 2007:2024) |> 
+   ungroup() |>
+   left_join(as_tibble(sf_edges) |> select(site, dasqkm_tot:upDist), by = "site") |> 
+   #count(site)
+   #summary() 
+   #filter(is.na(dasqkm_tot))
+   drop_na(dasqkm_tot) |> 
+   arrange(cmplx_strm, site, year))
+```
+
+```{r test_brms_hier_negbin_ar}
+
+library(brms)
+
+#sampling without specified priors but would prefer to specify
+#need to check what/how brms is doing with NAs being excluded relative to ar()
+fit <- brm(
+  n_L ~ dasqkm_tot + slope + elev_min + (1 | cmplx_abrv/strm/site) +
+    ar(time = year, gr = site, p = 1) + # AR(1) process within each site
+    offset(log(lgth_wdth)), # correct for varying survey area
+  data = d,
+  family = negbinomial(),
+  chains = 2,
+  cores = 2,
+  iter = 1000,
+  control = list(adapt_delta = 0.95),
+  seed = 123
+)
+
+#performance::check_model(fit)
+
+summary(fit)             # parameter estimates
+plot(fit)                # smooths and residuals
+plot(conditional_effects(fit), ask = F) |> 
+  wrap_plots()
+#pp_check(fit)            # posterior predictive checks
+loo(fit)                 # leave-one-out CV
+ranef(fit)
+
+
+fit_pp <- as_tibble(t(posterior_predict(fit)))  # cmplx_abrv:strm:site-years x draws
+fit_pp$site <- fit$data$site  #fit$data$`cmplx_abrv:strm:site` 
+fit_pp$cmplx_strm <- fit$data$`cmplx_abrv:strm`
+fit_pp |> count(site) |> arrange(n) #not year-complete as NAs have been dropped in fit
+
+#observed SD + distrib of posterior SDs
+#cool but unclear that need to 'predict' with uncertainty the volatility per-site
+#as much as examine conditional effects across streams/complexes?
+d_site_sd <- d |> 
+  summarise(
+    across(n_L, list(obs_sd = ~sd(., na.rm = T))),
+    .by = c(cmplx_strm, site)
+  ) |> 
+  mutate(site = fct_reorder(site, n_L_obs_sd, identity), .by = cmplx_strm)
+        
+fit_pp_sd <- fit_pp |>
+  summarise(across(V1:V1000, list(sd = ~sd(.))), .by = c(cmplx_strm, site)) |> 
+  pivot_longer(cols = starts_with("V")) |> 
+  mutate(site = factor(site, levels = levels(d_site_sd$site)))
+
+ggplot(mapping = aes(y = site, color = cmplx_strm, fill = cmplx_strm)) +
+  # geom_boxplot(
+  #   data = fit_pp_sd,
+  #   mapping = aes(x = value), outlier.alpha = 0.5, outlier.size = 0.6, show.legend = F
+  # ) +
+  ggridges::geom_density_ridges(
+    data = fit_pp_sd,
+    mapping = aes(x = value), alpha = 0.5,
+    show.legend = F
+  ) +
+  geom_point(
+    data = d_site_sd,
+    aes(x = n_L_obs_sd), shape = 3, size = 1.2, color = "grey20", show.legend = F
+  ) +
+  scale_fill_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+  facet_wrap(~cmplx_strm, scales = "free") +
+  labs(
+    title = "Posterior predicted distributions of per-site SD of n_L counts", x = NULL, y = NULL,
+    subtitle = fit$formula
+    )
+
+
+ce <- conditional_effects(
+  fit,
+  effects = "dasqkm_tot",
+#these run but are not actually adding anything to the data.frame...
+  #re_formula = NULL, 
+  #re_formula = '~ (1 | cmplx_abrv/strm)',
+  conditions = make_conditions(fit, var = "slope"),
+  rug = T, prob = c(0.95)
+  )
+ce
+#this 'works' to overplot, but it seems like either a better option coded somewhere
+#or go back to explicit predict(newdata) with expand_grid known defined levels...
+ce$dasqkm_tot |> ggplot() + geom_line(aes(dasqkm_tot, estimate__, color = cond__))
+
+#this shows how the complexes affect the intercept
+coef(fit, robust = T)$cmplx_abrv
+#and similarly the strms...
+coef(fit, robust = T)$`cmplx_abrv:strm`
+#but not the response in response units...
+
+
+#'If you suspect that volatility differs structurally across sites, streams, or complexes, and you include random slopes or intercepts, you can extract their posterior variances. This tells you how much residual interannual variation is left at each level (site, stream, complex) — and you can see if it’s large enough to justify modeling.'
+as.data.frame(VarCorr(fit))
+#seems to be same info as in summary(fit) but without diagnostics
+#unclear what to do with this
+
+
+#attempting random effects for slopes as well as intercept
+#possibly a bad idea
+fit2 <- brm(
+#this is completely removing physio vars as fixed
+#and pretty unclear to me what it is generating
+  #n_L ~ (1 + dasqkm_tot + slope + elev_min | cmplx_abrv/strm/site) +
+#should be?
+  n_L ~ dasqkm_tot + slope + elev_min + #fixed
+    (1 + dasqkm_tot + slope + elev_min | cmplx_abrv/strm/site) + #random slopes and intercepts
+    ar(time = year, gr = site, p = 1) + # AR(1) process within each site
+    offset(log(lgth_wdth)), # correct for varying survey area
+  data = d,
+  family = negbinomial(),
+  chains = 2,
+  cores = 2,
+  iter = 1000,
+  control = list(adapt_delta = 0.95),
+  seed = 123
+)
+
+# #all fixed
+# ## this is easily the worst thing tried out the gate and the coef estimate values make little sense at least initially
+# fit3 <- brm(
+#   n_L ~ dasqkm_tot + slope + elev_min + cmplx_abrv + strm + 
+#     ar(time = year, gr = site, p = 1) + # AR(1) process within each site
+#     offset(log(lgth_wdth)), # correct for varying survey area
+#   data = d,
+#   family = negbinomial(),
+#   chains = 2,
+#   cores = 2,
+#   iter = 1000,
+#   control = list(adapt_delta = 0.95),
+#   seed = 123
+# )
+# #try? seems wrong
+#   n_L ~ dasqkm_tot*cmplx_abr + slope*cmplx_abrv + elev_min*cmplx_abrv +
+#         dasqkm_tot*strm + slope*strm + elev_min*strm +
+
+
+
+#per cmplx, s(year)
+fit_hc <- brm(
+  n_L ~ dasqkm_tot + slope + elev_min + 
+    s(year) +
+    (1 | strm/site) +
+    #ar(time = year, gr = site, p = 1) + # AR(1) process within each site
+    offset(log(lgth_wdth)), # correct for varying survey area
+  data = d |> filter(cmplx_abrv == "HC"),
+  family = negbinomial(),
+  chains = 2,
+  cores = 2,
+  iter = 1000,
+  control = list(adapt_delta = 0.95),
+  seed = 123
+)
+
+fit_hc |> 
+  conditional_effects(
+  effects = "dasqkm_tot",
+  re_formula = NULL, 
+  conditions = make_conditions(fit_hc, var = "slope"),
+  rug = T, prob = c(0.95)
+  )
+
+```
+
+```{r test_glmernb}
+#https://stats.stackexchange.com/questions/198367/incorporating-auto-correlation-structure-into-a-negative-binomial-generalized-ad
+#https://stats.stackexchange.com/questions/311556/help-interpreting-count-data-glmm-using-lme4-glmer-and-glmer-nb-negative-binom
+
+#not sure these are temp autocorr enough to worry about?
+d |> 
+  nest(.by = c(cmplx_strm, site)) |> 
+  mutate(
+    acf1 = map_dbl(data, ~acf(.x$n_L, 1, plot = F, na.action = na.pass)$acf[2])
+    ) |> 
+  ggplot() + 
+  geom_boxplot(aes(acf1, cmplx_strm, color = cmplx_strm), position = "dodge", show.legend = F)
+
+#just space, treating per-year counts as independent, ignoring 'longitudinal' character
+f1 <- lme4::glmer.nb(
+  n_L ~ log10(dasqkm_tot) + slope + log10(elev_min) + 
+    (1 | cmplx_abrv/strm/site) +
+    offset(log(lgth_wdth)), # correct for varying survey area
+  data = d, verbose = TRUE
+)
+
+#adding year as fixed effect
+#this runs and year is 'signif', but not at all clear this is a sensible approach with 17-18 years (either as 1:17 or factor())
+f2 <- lme4::glmer.nb(
+  n_L ~ log10(dasqkm_tot) + slope + log10(elev_min) + 
+    year + 
+    (1 | cmplx_abrv/strm/site) +
+    offset(log(lgth_wdth)), # correct for varying survey area
+  #data = d |> mutate(year = year - 2006) #treating time as linear fixed effect
+  data = d |> mutate(year = factor(year)) #treating year as categorical/distinct f.e.
+  , 
+  verbose = TRUE
+)
+
+
+summary(f1)
+summary(f2)
+
+performance::check_model(f1)
+performance::check_model(f2)
+
+f1_r <- DHARMa::simulateResiduals(fittedModel = f1, plot = T)
+f2_r <- DHARMa::simulateResiduals(fittedModel = f2, plot = T)
+
+
+#fit per single complex, sites nested in streams
+#would be nice to fit s(year) but that's brms
+f_hc <- lme4::glmer.nb(
+  n_L ~ log10(dasqkm_tot) + slope + log10(elev_min) + 
+    year + 
+    (1 | strm/site) +
+    offset(log(lgth_wdth)), # correct for varying survey area
+  data = d |> mutate(year = year - 2006) |> 
+    filter(cmplx_abrv == "HC")
+  #data = d |> mutate(year = factor(year)) #treating year as categorical/distinct f.e.
+  , 
+  verbose = TRUE
+)
+f_lc <- lme4::glmer.nb(
+  n_L ~ log10(dasqkm_tot) + slope + log10(elev_min) + 
+    year + 
+    (1 | strm/site) +
+    offset(log(lgth_wdth)), 
+  data = d |> mutate(year = year - 2006) |> 
+    filter(cmplx_abrv == "LC")
+  , 
+  verbose = TRUE
+)
+f_st <- lme4::glmer.nb(
+  n_L ~ log10(dasqkm_tot) + slope + log10(elev_min) + 
+    year + 
+    (1 | strm/site) +
+    offset(log(lgth_wdth)), 
+  data = d |> mutate(year = year - 2006) |> 
+    filter(cmplx_abrv == "ST")
+  , 
+  verbose = TRUE
+)
+
+summary(f_hc) #all about 'year'
+summary(f_lc) #no 'year, all about space
+summary(f_st) #yet again different, both space and year
+
+#back to SD, family is gaussian by default
+f_sd <- lme4::lmer(
+  formula = n_L_m2_sd_log ~ 
+    log10(dasqkm_tot) + slope + log10(elev_min) + 
+    (1 | cmplx_abrv/strm)
+  ,
+  data = wood_sy_sml_nwm_sd |> #summary()
+    filter(is.finite(n_L_m2_sd_log)) |> #BIB010 & BIB012
+    drop_na(dasqkm_tot) #SEA064
+  , verbose = T
+)
+library(lmerTest)
+summary(f_sd)
+anova(f_sd)
+performance::check_model(f_sd)
+#give pvals for fixed though apparently these are not desirable
+f_sd_nlme <- nlme::lme(
+  n_L_m2_sd_log ~ log10(dasqkm_tot) + slope + log10(elev_min)
+  ,
+  random = ~ 1 | cmplx_abrv/strm
+  ,
+  data = wood_sy_sml_nwm_sd |> #summary()
+    filter(is.finite(n_L_m2_sd_log)) |> #BIB010 & BIB012
+    drop_na(dasqkm_tot) #SEA064
+  ) 
+f_sd_nlme
+summary(f_sd_nlme) #anova(f_sd_nlme)
+
+```
+
+
+```{r quick_site_mean_univariate_plots}
+d |> 
+  summarise(
+    across(dasqkm_tot:upDist, first),
+    across(ends_with("m2"), list(mean = ~mean(., na.rm = T))),
+    .by = c(cmplx_strm, site)
+  ) |> 
+  GGally::ggpairs(
+    aes(color = cmplx_strm, fill = cmplx_strm), columns = 3:9,
+    diag = list(continuous = GGally::wrap("densityDiag", alpha = 0.5)),
+    lower = list(continuous = GGally::wrap("points", alpha = 0.6, size = 0.6)),
+    ) + scale_color_manual(values = pal_cmplx_strm, aesthetics = c("color","fill"))
+
+d |> 
+  summarise(
+    across(dasqkm_tot:upDist, first),
+    across(ends_with("m2"), list(mean = ~mean(., na.rm = T))),
+    .by = c(cmplx_strm, site)
+  ) |> 
+  pivot_longer(cols = ends_with("m2_mean"), names_to = "wood_class", values_to = "wood_m2") |> 
+#  ggplot(aes(dasqkm_tot, wood_m2, color = cmplx_strm)) +
+  ggplot(aes(slope, wood_m2, color = cmplx_strm)) +
+  geom_point(size = 0.7, show.legend = F) +
+  geom_smooth(show.legend = F) +
+  scale_x_log10() +
+  scale_color_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+  facet_wrap( ~wood_class + cmplx_strm, nrow = 3, scales = "free")
+
+#ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_m2_da.png", width = 14, height = 11, dpi = 100, bg = "white")
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_m2_slope.png", width = 14, height = 11, dpi = 100, bg = "white")
+
+
+```
+
+expected clear pos corr
+```{r f_sd_vs_mu}
+wood_sy_sml_nwm_sd |> 
+  select(cmplx_abrv, cmplx_strm, strm, site, ends_with("1000m2_mu"), ends_with("1000m2_sd")) |> 
+  pivot_longer(cols = starts_with("n_")) |> 
+  mutate(
+    wood_class = str_sub(name,3,3),
+    var = str_sub(name,-2,-1), #var = str_sub(name,-9,-1),
+    name = NULL
+    ) |> 
+  pivot_wider(names_from = var, values_from = value) |> 
+  ggplot(aes(mu, sd, color = cmplx_strm)) +
+  geom_point(size = 0.7, show.legend = F) +
+  geom_smooth(show.legend = F) +
+  scale_color_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+  facet_wrap( ~wood_class + cmplx_strm, nrow = 3, scales = "free")
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_sy_sml_nwm_sd_vs_mu.png", width = 11, height = 9, dpi = 150, bg = "white")
+
+```
+more varied but still apparent negative log-linear corr
+```{r mu_vs_da}
+wood_sy_sml_nwm_sd |> 
+  select(cmplx_abrv, cmplx_strm, strm, site,
+         dasqkm_tot, elev_min, slope,
+         ends_with("1000m2_mu"), ends_with("1000m2_sd")) |> 
+  pivot_longer(cols = starts_with("n_")) |> 
+  mutate(
+    wood_class = str_sub(name,3,3),
+    var = str_sub(name,-2,-1), #var = str_sub(name,-9,-1),
+    name = NULL
+    ) |> 
+  pivot_wider(names_from = var, values_from = value) |> 
+  ggplot(aes(dasqkm_tot, mu, color = cmplx_strm)) +
+  geom_point(size = 0.7, show.legend = F) +
+  geom_smooth(show.legend = F) +
+  scale_x_log10() +
+  scale_color_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+  facet_wrap( ~wood_class + cmplx_strm, nrow = 3, scales = "free")
+
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_sy_sml_nwm_mu_vs_da.png", width = 11, height = 9, dpi = 150, bg = "white")
+
+```
+nearly identical as expected to mean-vs-da
+```{r sd_vs_da}
+wood_sy_sml_nwm_sd |> 
+  select(cmplx_abrv, cmplx_strm, strm, site,
+         dasqkm_tot, elev_min, slope,
+         ends_with("1000m2_mu"), ends_with("1000m2_sd")) |> 
+  pivot_longer(cols = starts_with("n_")) |> 
+  mutate(
+    wood_class = str_sub(name,3,3),
+    var = str_sub(name,-2,-1), #var = str_sub(name,-9,-1),
+    name = NULL
+    ) |> 
+  pivot_wider(names_from = var, values_from = value) |> 
+  ggplot(aes(dasqkm_tot, sd, color = cmplx_strm)) +
+  geom_point(size = 0.7, show.legend = F) +
+  geom_smooth(show.legend = F) +
+  scale_x_log10() +
+  scale_color_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+  facet_wrap( ~wood_class + cmplx_strm, nrow = 3, scales = "free")
+
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_sy_sml_nwm_sd_vs_da.png", width = 11, height = 9, dpi = 150, bg = "white")
+
+```
+much less clear univariate pattern
+```{r cv_vs_da}
+wood_sy_sml_nwm_sd |> 
+  select(cmplx_abrv, cmplx_strm, strm, site,
+         dasqkm_tot, elev_min, slope,
+         ends_with("cv")
+         ) |> #summary() #looks like *1000 controls to only a few outlier inflated by small mu
+  pivot_longer(cols = ends_with("cv")) |> 
+  mutate(
+    wood_class = str_sub(name,3,3),
+    var = str_sub(name,-2,-1), #var = str_sub(name,-9,-1),
+    name = NULL
+    ) |> 
+  pivot_wider(names_from = var, values_from = value) |> 
+  ggplot(aes(dasqkm_tot, cv, color = cmplx_strm)) +
+  geom_point(size = 0.7, show.legend = F) +
+  geom_smooth(show.legend = F) +
+  scale_x_log10() +
+  scale_color_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) +
+  facet_wrap( ~wood_class + cmplx_strm, nrow = 3, scales = "free")
+
+ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_sy_sml_nwm_cv_vs_da.png", width = 11, height = 9, dpi = 150, bg = "white")
+
+```
+
+
+this is really probably mostly showing effect of mean ~ DA
+```{r back_to_basics_sd}
+d_sd <- wood_sy_sml_nwm_sd |> #summary()
+    filter(is.finite(n_L_m2_sd_log)) |> #BIB010 & BIB012
+    drop_na(dasqkm_tot) #SEA064
+#similar to initial tests fitting per-stream in wood_sy_sml_nwm_SD_lm
+#but simplest 'pooled' approaches? 
+#first physio only, ignoring streams
+f_sd_lm <- lm(
+  n_L_m2_sd_log ~ log10(dasqkm_tot) + slope + log10(elev_min),
+  data = d_sd
+)
+#r2 ~0.27, not a great model but sees lots of DA effect
+summary(f_sd_lm); anova(f_sd_lm)
+performance::check_model(f_sd_lm) 
+
+#next stream as fixed effect
+f_sd_lm_strm <- lm(
+  n_L_m2_sd_log ~ log10(dasqkm_tot) + slope + log10(elev_min) + strm,
+  data = d_sd
+)
+#better model? r2 ~0.43, still strong effect for DA, but also clearly for strm and signif est for elev
+#still has trouble at hi/lo
+#what is utility of having stream-specific coef estimates?
+#maybe more the `anova` output indicating that 'strm' itself is more determinative than slope|elev
+#but still seems most useful as demo of why this is not best option? 
+summary(f_sd_lm_strm); anova(f_sd_lm_strm)
+performance::check_model(f_sd_lm_strm) 
+performance::r2(f_sd_lm_strm) 
+
+#next stream (only) as random effect
+f_sd_lmer_strm <- lme4::lmer(
+  n_L_m2_sd_log ~ log10(dasqkm_tot) + slope + log10(elev_min) + 
+    (1 | strm)
+  ,
+  data = d_sd, verbose = T
+)
+#finds effects for DA and (modest) elev
+summary(f_sd_lmer_strm); anova(f_sd_lmer_strm)
+performance::check_model(f_sd_lmer_strm)
+performance::r2(f_sd_lmer_strm) #apparently a dubious quantity
+
+anova(f_sd_lmer_strm, f_sd_lm_strm)
+
+library(brms)
+#no stream effect, fixed or random; linear covars
+f_sd_brm <- brm(
+  n_L_m2_sd_log ~ log10(dasqkm_tot) + slope + log10(elev_min),
+  data = d_sd,
+  family = gaussian(),
+#  prior = priors,
+  chains = 2, cores = 2, iter = 1000, control = list(adapt_delta = 0.95), seed = 123
+)
+#fixed effect of stream
+f_sd_brm_strm <- brm(
+  n_L_m2_sd_log ~ log10(dasqkm_tot) + slope + log10(elev_min) + strm,
+  data = d_sd,
+  family = gaussian(),
+#  prior = priors,
+  chains = 2, cores = 2, iter = 1000, control = list(adapt_delta = 0.95), seed = 123
+)
+#random effect of stream (allowing per-stream intercept of the mean log_sd)
+f_sd_brm_strm_re <- brm(
+  n_L_m2_sd_log ~ log10(dasqkm_tot) + slope + log10(elev_min) + (1 | strm),
+  data = d_sd,
+  family = gaussian(),
+#  prior = priors,
+  chains = 2, cores = 2, iter = 1000, control = list(adapt_delta = 0.95), seed = 123
+)
+
+summary(f_sd_brm)
+summary(f_sd_brm_strm)
+summary(f_sd_brm_strm_re)
+
+f_sd_brm <- add_criterion(f_sd_brm, "waic")
+f_sd_brm_strm <- add_criterion(f_sd_brm_strm, "waic")
+f_sd_brm_strm_re <- add_criterion(f_sd_brm_strm_re, "waic")
+
+loo(f_sd_brm)
+loo(f_sd_brm_strm)
+loo_compare(f_sd_brm, f_sd_brm_strm, f_sd_brm_strm_re, criterion = 'waic')
+
+pp_check(f_sd_brm)
+pp_check(f_sd_brm_strm)
+pp_check(f_sd_brm_strm_re)
+
+map(
+  list(f_sd_brm, f_sd_brm_strm, f_sd_brm_strm_re)
+  ,
+  ~conditional_effects(
+    .x,
+    effects = "dasqkm_tot",
+    re_formula = NULL, 
+    conditions = make_conditions(.x, var = "slope"), rug = T, prob = c(0.95)
+  )
+)
+
+ce <- conditional_effects(
+    f_sd_brm_strm_re,
+    effects = "dasqkm_tot",
+    re_formula = NULL, 
+    #conditions = make_conditions(f_sd_brm_strm_re, var = "slope"), rug = T, prob = c(0.95)
+    conditions = make_conditions(f_sd_brm_strm_re, var = "strm"), rug = T, prob = c(0.95)
+  )
+#maybe interesting?
+ce$dasqkm_tot |> 
+  ggplot(aes(dasqkm_tot, estimate__, color = strm, fill = strm)) +
+  #geom_smooth()  + 
+  geom_line() + geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.4) + 
+  scale_color_manual(values = pal_strm, aesthetics = c("color","fill"))
+
+
+#do an sf prediction
+```
+should bring the log(cv) back up to earlier object declaration
+```{r back_to_basics_cv}
+d_cv <- wood_sy_sml_nwm_sd |> 
+  select(cmplx_abrv, cmplx_strm, strm, site,
+         dasqkm_tot, elev_min, slope,
+         ends_with("cv")
+         ) |> 
+  drop_na(n_L_1000m2_cv, dasqkm_tot) |>  #|> summary()
+  mutate(
+    across(ends_with("cv"), list(log = ~log(.)))
+  )
+  
+#similar to initial tests fitting per-stream in wood_sy_sml_nwm_SD_lm
+#but simplest 'pooled' approaches? 
+#first physio only, ignoring streams
+f_cv_lm <- lm(
+  n_L_1000m2_cv_log ~ log10(dasqkm_tot) + slope + log10(elev_min),
+  data = d_cv
+)
+#r2 ~0.04!, not a great model! minor DA & elev
+summary(f_cv_lm); anova(f_cv_lm)
+performance::check_model(f_cv_lm) 
+
+#next stream as fixed effect
+f_cv_lm_strm <- lm(
+  n_L_1000m2_cv_log ~ log10(dasqkm_tot) + slope + log10(elev_min) + strm,
+  data = d_cv
+)
+#not much better model
+summary(f_cv_lm_strm); anova(f_cv_lm_strm)
+performance::check_model(f_cv_lm_strm) 
+
+#next stream (only) as random effect
+f_cv_lmer_strm <- lme4::lmer(
+  n_L_1000m2_cv_log ~ log10(dasqkm_tot) + slope + log10(elev_min) + (1 | strm),
+  data = d_cv, verbose = T
+)
+#maybe modest effects for elev and perhaps slope
+summary(f_cv_lmer_strm); anova(f_cv_lmer_strm)
+performance::check_model(f_cv_lmer_strm)
+performance::r2(f_cv_lmer_strm) #apparently a dubious quantity
+#no meaningful diffs
+anova(f_cv_lmer_strm, f_cv_lm_strm, f_cv_lm)
+
+#could/should test further for differences by wood class?
+#simple for cv of "S" is not great but better overall model and finds DA and elev effects
+f_cv_lm_S <- lm(n_S_1000m2_cv_log ~ log10(dasqkm_tot) + slope + log10(elev_min), data = d_cv)
+summary(f_cv_lm_S) 
+#whereas cv M is terrible!
+f_cv_lm_M <- lm(n_M_1000m2_cv_log ~ log10(dasqkm_tot) + slope + log10(elev_min), data = d_cv)
+summary(f_cv_lm_M) 
+
+f_cv_lmer_strm_S <- lme4::lmer(
+  n_S_1000m2_cv_log ~ log10(dasqkm_tot) + slope + log10(elev_min) + (1 | strm),
+  data = d_cv, verbose = T
+)
+summary(f_cv_lmer_strm_S)
+anova(f_cv_lmer_strm_S, f_cv_lmer_strm)
+
+library(brms)
+#no stream effect, fixed or random; linear covars
+f_cv_brm <- brm(
+  n_L_1000m2_cv_log ~ log10(dasqkm_tot) + slope + log10(elev_min),
+  data = d_cv,
+  family = gaussian(),
+#  prior = priors,
+  chains = 2, cores = 2, iter = 1000, control = list(adapt_delta = 0.95), seed = 123
+)
+#fixed effect of stream
+f_cv_brm_strm <- brm(
+  n_L_1000m2_cv_log ~ log10(dasqkm_tot) + slope + log10(elev_min) + strm,
+  data = d_cv,
+  family = gaussian(),
+#  prior = priors,
+  chains = 2, cores = 2, iter = 1000, control = list(adapt_delta = 0.95), seed = 123
+)
+#random effect of stream (allowing per-stream intercept of the mean log_sd)
+f_cv_brm_strm_re <- brm(
+  n_L_1000m2_cv_log ~ log10(dasqkm_tot) + slope + log10(elev_min) + (1 | strm),
+  data = d_cv,
+  family = gaussian(),
+#  prior = priors,
+  chains = 2, cores = 2, iter = 1000, control = list(adapt_delta = 0.95), seed = 123
+)
+
+summary(f_cv_brm)
+summary(f_cv_brm_strm)
+summary(f_cv_brm_strm_re)
+
+f_cv_brm <- add_criterion(f_cv_brm, "waic")
+f_cv_brm_strm <- add_criterion(f_cv_brm_strm, "waic")
+f_cv_brm_strm_re <- add_criterion(f_cv_brm_strm_re, "waic")
+
+loo(f_cv_brm)
+loo(f_cv_brm_strm)
+loo_compare(f_cv_brm, f_cv_brm_strm, f_cv_brm_strm_re, criterion = 'waic')
+
+pp_check(f_cv_brm)
+pp_check(f_cv_brm_strm)
+pp_check(f_cv_brm_strm_re)
+
+
+ce <- conditional_effects(
+    f_cv_brm_strm_re,
+    effects = "slope",
+    re_formula = NULL, 
+    #conditions = make_conditions(f_cv_brm_strm_re, var = "slope"), rug = T, prob = c(0.95)
+    conditions = make_conditions(f_cv_brm_strm_re, var = "strm"), rug = T, prob = c(0.95)
+  )
+#maybe interesting?
+ce$slope |> 
+  ggplot(aes(slope, estimate__, color = strm, fill = strm)) +
+  #geom_smooth()  + 
+  geom_line() + geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.4) + 
+  scale_color_manual(values = pal_strm, aesthetics = c("color","fill"))
+
+```
+
+
+[Original 'prelim' now seeming more like sd as proportional to mu, 
+such that variation magnitude is not separable from overall mean woodiness...
+but also have not thoroughly tested log(cv) of "S" and "M"]
+Prelim finding: basic physiographic/network-position measures can account for much of the variation in the magnitude of interannual variation in 'large' wood, distinguishing the smaller 'ongoing churn' size pieces from the 'keystone' very large pieces; complemented with NWM peak flow correlations for S vs M/L
+
+- Drop 'complex' as a nesting/hier layer
+  - could fit separately by complex, nesting sites in streams,
+  - or include as fixed covar still with 1|strm/site,
+  - or ignore altogether still with 1|strm or 1|strm/site
+- Time-summarized response if focus is really on simply on spatial pattern and predictors of condition & volatility? 
+  - looks like reasonable fits for mu and log(sd) but with log(sd) arguably less a reflection of 'volatility'-perse than the scale of characteristic woodiness (bigger swings in SD reflect more wood to come and go, not as much fluvial geomorph process variation within network?)
+  - cv of L or M do not look likely to be well fit with linear covars; cv of S maybe and perhaps smooth terms in brms approach
+- Full time series response to parse variation as spatial vs temporal?
+
+Dataset:
+  - response: longitudinal/time series of yearly 2007-2024 counts (by size class) with offset at sites (20-30) nested in streams (10) in complexes (3)
+    - spatial (strong) and temporal (modest) autocorrelation
+    - randomized sampling design but order of magnitude diff in sampling density as sites/stream_km and imperfectly uniform network coverage
+  - predictors: 
+    - atemporal physiographic/spatial stream network attributes - drainage/contributing area, site/reach slope (gradient)
+    - time varying: year and/or regional hydroclimate fluctuations actually estimated via NWM3.0 high flow values
+    - likely subject to similar spatiotemporal autocorrelation(s) as the response
+
+
+map sd of arealdensity
 
 ```{r map_m2_sd}
 #quick and ugly
@@ -2623,15 +3316,31 @@ split(~strm) |>
 ```
 
 
-Prelim finding: basic physiographic/network-position measures can account for much of the variation in the magnitude of interannual variation in 'large' wood, distinguishing the smaller 'ongoing churn' size pieces from the 'keystone' very large pieces; complemented with NWM peak flow correlations for S vs M/L
+    
+
+
+https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html#model-diagnostics
+
+https://stats.stackexchange.com/q/151800 #nice description of 'random' effects
+
+as usual a very nice treatment: https://otexts.com/fpp3/hierarchical.html
+helpful for clarifying the question of whether or not site series aggregate (at least by summing) into a single 'per-stream' series
+there is no 'total person' in a longitudinal study with repeat measures of subjects
+not in the same sense as a 'total sales' from sectoral or geographic subdivisions
+
+
+can read more on 'panel' (longitudinal) methods, with sites as subjects, nested in streams
+https://www.econometrics-with-r.org/10-rwpd.html
+https://www.econometrics-with-r.org/10.4-regression-with-time-fixed-effects.html
+
 
 Next
-  - SD vs median abs diff vs mean abs diff
-  - Hierarchical? 
-  - rstanarm?
+  - assuming hierarchical (streams nested in complexes) in brms:
+    - stick with log(sd) such that fitted response is the mean of the standard deviation
+    - or more directly model the mean density (densities by stream) and examine the estimates of the sd?
+    - or even more directly go back to modeling the per-year densities, maybe via ar(year)? treating as nested series as by Eric Ward (going back to something like https://atsa-es.github.io/atsa-labs/sec-marss-fitting-with-stan.html) 
+  - any reason to re-examine median abs diff vs mean abs diff
 
-gamma, lognorm
-glmmTMBm, brms,
 
 prompts have useful text:
 
@@ -2639,3 +3348,4 @@ I'm a researcher analyzing a dataset with a response measure that is the standar
 
 Those were both very helpful responses, thank you. In this analysis, the 25-30 sites are indeed nested within 10 distinct streams and their encompassing watersheds, but these 10 streams are further grouped within 3 'complexes' in different physiographic regions with known climatic, geologic, and land use variation. So the hierarchical structure, from top to bottom is actually 3 'complexes', with 10 streams split 3-3-4 across complexes, and with 25-30 sites per stream (and with 10-18 years of observations at each site, from which I'm calculating the per-site standard deviation). I've inspected QQ for log(sd), and it looks to bring most streams tolerably 'close to normal'. For now, assuming that I proceed with a log(sd) response, I'm interested in pursuing a hierarchical structure that includes site-level covariates for factors such as per-site slope (i.e., longitudinal gradient) and drainage area and elevation. I can see reasonably strong univariate linear relationships with several of my covariates, and separate models per stream of `log(sd) ~ dasqkm + slope + elev` have decent fit and performance statistics but suggest some nonlinearity (which is reasonable and expected). I know that there are "substantial, interpretable differences" in both response and covariates among complexes, among individual streams within complexes (the 'locations'), and among sites within streams. I'm interested in explaining patterns within these particular streams, but I'm also very interested in generalizing from them to the broader population of regional streams & watersheds. I'm quite open to a Bayesian approach (e.g., `rstanarm` or `brms` and/or something coded in `glmmTMB` or a different package. 
 
+That was another very helpful answer, and I modified the examples to reach some preliminary model fits. Before I pursue those further, examining alternative formulations and interpreting the results, I'd like to step back and ask about a related but different approach. Since the response measure n_L_m2_sd_log is created by calculating the standard deviation over several years of density observations at each site, nested within each of the streams nested in complexes (with the densities themselves actually the count divided by the surveyed area), I would like to consider directly modeling those per-site annual series and evaluating the parameter estimates. The environmental covariates (dasqkm_tot, slope, elev_min) for individual sites are unchanged over time. Would a modified brm with a Poisson or negative binomial still make sense to account for temporal autocorrelation in the counts? If so, would that involve including an ar() term in the model formula? If not, what options would you suggest?
