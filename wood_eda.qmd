@@ -1179,6 +1179,222 @@ ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_ssnredux_sd_l
 
 ```
 
+```{r test_tidyvast}
+#stepping through https://vast-lib.github.io/tinyVAST/articles/web_only/stream_networks.html
+#to confirm runable and inspect objects
+
+library(sfnetworks)
+library(tinyVAST)
+set.seed(101)
+options("tinyVAST.verbose" = T)
+
+
+#sf linstring, 'from' and 'to' attributes
+stream <- st_read( file.path(system.file("stream_network",package="tinyVAST"), "East_Fork_Lewis_basin.shp"), quiet=TRUE )
+#coerce to rooted tree, overwrites from/to of st_read
+(stream = as_sfnetwork(stream)) #86 nodes, 85 edges
+ggplot() +
+  geom_sf(data = as_tibble(stream)) +
+  geom_sf(data = mutate(stream, root = tidygraph::node_is_root()) |> filter(root) |> as_tibble(), color = "blue")
+#creates 4 element list
+graph = tinyVAST::sfnetwork_mesh( stream )
+glimpse(graph)
+#adds 'table' data.frame of edge to/from/dist cols and 'Dist_ss' sparse matrix dgCMatrix class
+graph$table$dist = graph$table$dist / 1000  # Convert distance scale
+graph$Dist_ss
+#checking topology...
+setdiff(graph$table$to, graph$table$from) #various
+setdiff(graph$table$from, graph$table$to) #single, 85, implies directed away-from-root
+graph$stream |> mutate(root = tidygraph::node_is_root()) |> as_tibble() |> print(n=Inf) #node 85
+graph$stream |> tidygraph::activate("edges") |> filter(to == 85)
+graph$stream |> tidygraph::activate("edges") |> filter(from == 85) #flowing 'upward'
+#but this was already defined in as_sfnetwork
+stream |> mutate(root = tidygraph::node_is_root()) |> as_tibble() |> print(n=Inf)
+
+alpha = 2
+kappa = 0.05
+# mean(graph$table$dist) * kappa = 0.63 -> exp(-0.63) = 0.5 average correlation
+# this is n-nodes vector
+omega_s = tinyVAST::simulate_sfnetwork( n=1, sfnetwork_mesh=graph, theta=kappa)[,1]
+# sample locations along network
+#this is 106 random locations
+extrap = activate(stream,"edges") |> st_line_sample(density=1/10000) |> st_union() |> st_cast("POINT")
+
+# Project to sampled locations
+# this is n-locations x n-nodes matrix
+A_is = sfnetwork_evaluator(
+  stream = graph$stream,
+  loc = st_coordinates(extrap) 
+  )
+dim(A_is)
+omega_i = (A_is %*% omega_s)[,1] #maybe the "_i" is interpolated? where _s is simulated?
+# Simulate sampling
+#Count = rpois( n=graph$n, lambda=exp(alpha + omega) )
+Count_i = rnorm( n=length(omega_i), mean=alpha + omega_i, sd=0.5 )
+# Format into long-form data frame expected by tinyVAST
+Data = data.frame( Count = Count_i, #includes negative values
+                   st_coordinates(extrap), #coerced to "X" and "Y"
+                   var = "species",  # Univariate model so only one value
+                   time = "2020",    # no time-dynamics, so only one value
+                   dist = "obs" )    # only one type of sampling in data
+Data 
+#runs to make 12 element list
+out = tinyVAST(
+  data = Data,
+  formula = Count ~ 1,
+  spatial_domain = graph,
+  space_column = c("X","Y"),
+  variable_column = "var",
+  time_column = "time",
+  distribution_column = "dist",
+  space_term = "" 
+  )
+
+
+
+#both 'rooted tree', but at least this example is 'flowing up' directed "from" root
+#while SSNs are 'flowing down' directed "to" root
+sf_edges |> filter(str_detect(strm, "Stavis")) |> 
+  #as_tibble() |> count(NHDPlusID) |> arrange(desc(n))
+  distinct(NHDPlusID, .keep_all = T) |> 
+  #mapview::mapview()
+  as_sfnetwork() |> #rooted tree
+# #equivalently
+# ssn$`171100180107_Stavis_55000800121057`$edges |> as_sfnetwork()
+  mutate(root = tidygraph::node_is_root()) |> #print(n=Inf) #node 5
+  activate("edges") |> 
+  #filter(from == 5) #no edges
+  filter(to == 5) #the correct to-root-node edge 55000800121057
+
+#need `st_reverse` to prevent error "Stream network has multiple parents for a node, i.e., isn't ordered upstream as assumed"
+(s <- ssn$`171100180107_Stavis_55000800121057`$edges |> 
+    select(-netID, -netgeom) |>
+    st_reverse() |> 
+    as_sfnetwork())
+(g = tinyVAST::sfnetwork_mesh(s))
+g$table$dist = g$table$dist / 1000  # Convert distance scale
+
+#need to construct georef'd obs
+#have original site lon-lat in site_meta (as well as year-specific in sf_site_year from transect)
+#but want to take advantage of SSNbler snapping to streamlines
+#could rewrite wood_sy_sml_nwm_vast construction, retaining NHDPlusID from final join of NHDplusHR edge attributes
+#but instead doing expanding join by site of per-year (long) wood counts by class
+#does this need dummy "dist[ribution]" column mutated on? 
+sites_dropped <- c("STA020", "DEW243", "DEW067", "AND002", "GER004", "SEA064")
+
+(d <- ssn$`171100180107_Stavis_55000800121057`$obs |> 
+  select(cmplx_strm:site, NHDPlusID:slope) |> 
+  arrange(site) |> 
+  filter(!(site %in% sites_dropped)) |> 
+  as_tibble() |> 
+  mutate(
+    X = st_coordinates(geom)[,1],
+    Y = st_coordinates(geom)[,2]
+  ) |> 
+  left_join(wood_sy_sml, by = c("strm","site")) |> 
+  left_join(site_comid, by = c("strm","site")) |> 
+  left_join(
+    nwm |> 
+      summarise(
+        across(cfs, list(
+          #q90 = ~quantile(.,p=c(0.9)),
+          #q95 = ~quantile(.,p=c(0.95)) ,
+          q99 = ~quantile(.,p=c(0.99)) #,
+          #max = ~max(.)
+        )),
+        .by = c(comid, wy)
+      )
+    ,
+    by = c("comid", "year" = "wy")
+  ) |> 
+    mutate(dist_col = "obs")
+  )
+
+#start with single wood size class
+d_S <- filter(d, wood_class == "S") |> droplevels()
+
+tv0 = tinyVAST(
+  data = as.data.frame(d_S),
+  formula = n ~ 1 + offset(log(lgth_wdth)), # correct for varying survey area
+  family = nbinom1(), #no idea whether this is preferable to nbinom2()
+  spatial_domain = g,
+  space_column = c("X","Y"),
+  variable_column = "wood_class",
+  time_column = "year",
+  distribution_column = "dist_col", #just a repeated character string
+  space_term = "" #will want time_term and spacetime_term
+  )
+
+tv1 = tinyVAST(
+  data = as.data.frame(d_S),
+  formula = n ~ 1 + log(dasqkm_tot) + offset(log(lgth_wdth)), # correct for varying survey area
+  family = nbinom1(), #no idea whether this is preferable to nbinom2()
+  spatial_domain = g,
+  space_column = c("X","Y"),
+  variable_column = "wood_class",
+  time_column = "year",
+  distribution_column = "dist_col", #just a repeated character string
+  space_term = "" #will want time_term and spacetime_term
+  )
+
+tv2 = tinyVAST(
+  data = as.data.frame(d_S),
+  formula = n ~ 1 + log(dasqkm_tot) + s(year) + offset(log(lgth_wdth)), # correct for varying survey area
+  family = nbinom1(), #no idea whether this is preferable to nbinom2()
+  spatial_domain = g,
+  space_column = c("X","Y"),
+  variable_column = "wood_class",
+  time_column = "year",
+  distribution_column = "dist_col", #just a repeated character string
+  space_term = "" #will want time_term and spacetime_term
+  )
+
+#adding s(log(cfs_q99)) aborts session
+# ---> no time varying covariates?
+#adding s(site, bs="re") fails with:  Error in names(dat) <- object$term : 'names' attribute [1] must be the same length as the vector [0] 
+# ---> do per-site random effects make sense given spatialautocorr and per-site spatially varied covars?
+tv3 = tinyVAST(
+  data = as.data.frame(d_S),
+  formula = n ~ 1 + log(dasqkm_tot) + s(year) + 
+    #BOMBS: s(log(cfs_q99)) + 
+    #s(site, bs="re") +
+    slope +
+    offset(log(lgth_wdth)), # correct for varying survey area
+  family = nbinom1(), #no idea whether this is preferable to nbinom2()
+  spatial_domain = g,
+  space_column = c("X","Y"),
+  variable_column = "wood_class",
+  time_column = "year",
+  distribution_column = "dist_col", #just a repeated character string
+  space_term = "" #will want time_term and spacetime_term
+  )
+
+tv0
+tv1
+tv2
+tv3
+d_S$tv0 <- predict(tv0)
+d_S$tv1 <- predict(tv1)
+d_S$tv2 <- predict(tv2)
+d_S$tv3 <- predict(tv3) #this is actually numerically different but only at thousandths
+
+d_S |> ggplot(aes(year)) + 
+  geom_line(aes(y=tv0), color = "grey60") + 
+  geom_line(aes(y=tv1), color = "tan") + 
+  geom_line(aes(y=tv2), color = "lightblue", linewidth = 1.5) + 
+  geom_line(aes(y=tv3), color = "purple", linewidth = 0.5) + 
+  geom_point(aes(y=n), size = 0.7) + facet_wrap(~site)
+
+
+activate(g$stream, "edges") |> 
+  left_join(g$table, by = c("from","to")) |> 
+  as_tibble() |> 
+  ggplot() + geom_sf(aes(color = dist, linewidth = dist)) + scale_linewidth(range = c(0.5,2))
+
+```
+
+
+
 ```{r rc_confinement_vbet}
 #can prob get some values for all sites
 #but either need different RC product or work to translate into something suited for per-site attribution
