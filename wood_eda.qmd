@@ -172,10 +172,11 @@ wood_sy_sml |>
   facet_wrap(~wood_class, labeller = label_wrap_gen(multi_line = F), nrow = 3, scale = "free_y")
 ```
 
+## wood_sy_sml initial hiearchical model testing {.content-hidden when-format="html"}
 
 create a year-complete object of counts by class, q99, and dasqkm/slope/elev
 
-```{r wood_sy_sml_nwm}
+```{r wood_sy_sml_nwm, include=FALSE, eval=FALSE}
 # #recall that 'wood_sy' backed up to hab, prior to site exclusion by n-years-obs
 # #could constrain further by number of years obs
 # #semi-join on site_meta still includes several sites with <10 years
@@ -239,7 +240,7 @@ wood_sy_sml_nwm <- wood_sy_sml |>
 
 ```
 
-```{r f_years_obs_point}
+```{r f_years_obs_point, include=FALSE, eval=FALSE}
 wood_sy_sml_nwm |> 
   drop_na(n_L) |> 
   ggplot(aes(year, site, color = cmplx_strm)) + 
@@ -250,10 +251,10 @@ wood_sy_sml_nwm |>
   labs(x = NULL, y = NULL) + 
   theme(axis.text.y = element_text(size = 4))
 
-ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_years_obs_point.png", height = 14, width = 10, bg = "white", dpi = 100)
+#ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_years_obs_point.png", height = 14, width = 10, bg = "white", dpi = 100)
 ```
 
-```{r wood_sy_sml_nwm_musdcv}
+```{r wood_sy_sml_nwm_musdcv, include=FALSE, eval=FALSE}
 wood_sy_sml_nwm_musdcv <- wood_sy_sml_nwm |> 
   summarise(
     across(
@@ -291,7 +292,7 @@ wood_sy_sml_nwm_musdcv <- wood_sy_sml_nwm |>
 
 
 expected clear pos corr
-```{r f_sd_vs_mu}
+```{r f_sd_vs_mu, include=FALSE, eval=FALSE}
 wood_sy_sml_nwm_musdcv |> 
   select(cmplx_abrv, cmplx_strm, strm, site, ends_with("1000m2_mu"), ends_with("1000m2_sd")) |> 
   pivot_longer(cols = starts_with("n_")) |> 
@@ -310,7 +311,7 @@ ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_sy_sml_n
 
 ```
 more varied but still apparent negative log-linear corr
-```{r mu_vs_da}
+```{r mu_vs_da, include=FALSE, eval=FALSE}
 wood_sy_sml_nwm_musdcv |> 
   select(cmplx_abrv, cmplx_strm, strm, site,
          dasqkm_tot, elev_min, slope,
@@ -333,7 +334,7 @@ ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_sy_sml_n
 
 ```
 nearly identical as expected to mean-vs-da
-```{r sd_vs_da}
+```{r sd_vs_da, include=FALSE, eval=FALSE}
 wood_sy_sml_nwm_musdcv |> 
   select(cmplx_abrv, cmplx_strm, strm, site,
          dasqkm_tot, elev_min, slope,
@@ -356,7 +357,7 @@ ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_sy_sml_n
 
 ```
 much less clear univariate pattern
-```{r cv_vs_da}
+```{r cv_vs_da, include=FALSE, eval=FALSE}
 wood_sy_sml_nwm_musdcv |> 
   select(cmplx_abrv, cmplx_strm, strm, site,
          dasqkm_tot, elev_min, slope,
@@ -381,15 +382,7 @@ ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_wood_sy_sml_n
 ```
 
 
-MAD ~ DAsqkm
-
-  - yay?! interestingly different picture
-  - decently strong neg reln for M & S in HC, and arguably S across all streams
-  - other than Mill and maybe Germany, little reln for L 
-  
-
-
-```{r test_brms_hier_SD}
+```{r test_brms_hier_SD, include=FALSE, eval=FALSE}
 #trying from: https://chatgpt.com/share/6802ad1a-07b0-8003-b161-e3ea9131a407
 #modified to try starting with linear fixed effects and streams within complexes as nested random effects
 
@@ -455,7 +448,7 @@ wood_sy_sml_nwm_sd |>
 
 ```
 
-```{r test_brms_hier_negbin_ar}
+```{r test_brms_hier_negbin_ar, include=FALSE, eval=FALSE}
 
 library(brms)
 
@@ -620,7 +613,7 @@ fit_hc |>
 
 ```
 
-```{r test_glmernb}
+```{r test_glmernb, include=FALSE, eval=FALSE}
 #https://stats.stackexchange.com/questions/198367/incorporating-auto-correlation-structure-into-a-negative-binomial-generalized-ad
 #https://stats.stackexchange.com/questions/311556/help-interpreting-count-data-glmm-using-lme4-glmer-and-glmer-nb-negative-binom
 
@@ -734,7 +727,7 @@ summary(f_sd_nlme) #anova(f_sd_nlme)
 ```
 
 this is really probably mostly showing effect of mean ~ DA
-```{r back_to_basics_sd}
+```{r back_to_basics_sd, include=FALSE, eval=FALSE}
 d_sd <- wood_sy_sml_nwm_sd |> #summary()
     filter(is.finite(n_L_m2_sd_log)) |> #BIB010 & BIB012
     drop_na(dasqkm_tot) #SEA064
@@ -848,7 +841,7 @@ ce$dasqkm_tot |>
 #do an sf prediction
 ```
 should bring the log(cv) back up to earlier object declaration
-```{r back_to_basics_cv}
+```{r back_to_basics_cv, include=FALSE, eval=FALSE}
 d_cv <- wood_sy_sml_nwm_sd |> 
   select(cmplx_abrv, cmplx_strm, strm, site,
          dasqkm_tot, elev_min, slope,
@@ -998,7 +991,7 @@ Dataset:
 
 sf map sd of arealdensity
 
-```{r map_m2_sd}
+```{r map_m2_sd, include=FALSE, eval=FALSE}
 #quick and ugly
 sf_site_meta |> 
   select(cmplx_abrv, strm, site) |> 
@@ -1025,7 +1018,7 @@ to fit ssn_glm.nb on SML_mu would need mean(lgth_wdth offset)?
 or could ssn_glm.nb on SML direct, allowing/including years as independent rather than repeated/longitudinal...could also include 'year' covar but then factor vs ordinal etc.
 ssn_glm.gamma runs but then back to interpreting gamma?
 ssn_lm of sd_log separately by stream
-```{r ssn_redux}
+```{r ssn_redux, include=FALSE, eval=FALSE}
 wood_sy_sml_nwm_musdcv |> 
   #ggplot(aes(sample = n_S_1000m2_sd_log, color = strm)) +
   #ggplot(aes(sample = n_S_1000m2_mu, color = strm)) +
@@ -1178,6 +1171,8 @@ ggsave("~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/fig/f_ssnredux_sd_l
 
 
 ```
+
+## testing tinyVAST 
 
 ```{r test_tidyvast}
 #stepping through https://vast-lib.github.io/tinyVAST/articles/web_only/stream_networks.html
@@ -1391,26 +1386,277 @@ activate(g$stream, "edges") |>
   as_tibble() |> 
   ggplot() + geom_sf(aes(color = dist, linewidth = dist)) + scale_linewidth(range = c(0.5,2))
 
+map_df(ls(pattern = "tv"), \(x) tibble(f = x, aic = cAIC(get(x)))) |> 
+  bind_cols(
+    map_df(ls(pattern = "tv"), ~summary(get(.x)))
+  )
+
+map(ls(pattern = "tv"), ~summary(get(.x), "fixed"))
+map(ls(pattern = "tv"), ~vcov(get(.x), "fixed"))
+
+```
+
+build topology objects via `tinyVAST::sfnetwork_mesh()` for `spatial_domain =` argument of `tinyVAST()`
+this creates 4 element lists from `sfnetwork` rooted trees with edges directed out/upstream/away 'from' root node
+adding `table` data.frame of edge to/from/dist cols and `Dist_ss` sparse matrix of class `dgCMatrix`
+
+```{r vast_strm_g}
+vast_strm_g <- map(
+  ssn,
+  \(x){
+    g <- x$edges |>
+      select(-netID, -netgeom) |>
+      mutate(
+        cmplx_strm = x$obs$cmplx_strm[1],
+        strm = x$obs$strm[1]
+      ) |> 
+      st_reverse() |> 
+      sfnetworks::as_sfnetwork() |> 
+      tinyVAST::sfnetwork_mesh()
+    g$table$dist <- g$table$dist / 1000
+    return(g)
+  }
+)
+
+vast_strm_g <- set_names(vast_strm_g, map_chr(vast_strm_g, ~as_tibble(.x$stream, "edges")$cmplx_strm[1]))
+
+```
+
+reconstruct georeferenced site observations
+could go even further back into emap/hab object creation, where year-specific lon-lat of center transect
+but want to take advantage of SSNbler snapping to streamlines
+so expanding join by site of per-year wood counts by wood size class
+for now constructing as single tibble across streams and wood classes to allow various `split()` lists
+```{r vast_strm_d}
+sites_dropped <- c("STA020", "DEW243", "DEW067", "AND002", "GER004", "SEA064")
+
+vast_strm_d <- map_df(
+  ssn, ~.x$obs |> select(cmplx_strm:site, NHDPlusID:slope)
+  ) |> 
+    filter(!(site %in% sites_dropped)) |> 
+    as_tibble() |> 
+  mutate(
+    X = st_coordinates(geom)[,1],
+    Y = st_coordinates(geom)[,2]
+  ) |> 
+  left_join(wood_sy_sml, by = c("strm","site")) |> 
+  left_join(site_comid, by = c("strm","site")) |> 
+  left_join(
+    nwm |> 
+      summarise(
+        across(cfs, list(
+          q99 = ~quantile(.,p=c(0.99))
+        )),
+        .by = c(comid, wy)
+      )
+    ,
+    by = c("comid", "year" = "wy")
+  ) |> 
+    drop_na(lgth_wdth) |> #missing offset causes abort session bombs
+    mutate(
+      dist_col = "obs"
+      ,
+      site = factor(site) #must be factor for: s(site, bs = "re")
+      )
+
+summary(vast_strm_d)
+
 ```
 
 
+ - is `nbinom2()` or even a poisson preferable?
+ - is (1|site) sensible given the spatial field? 
 
-```{r rc_confinement_vbet}
-#can prob get some values for all sites
-#but either need different RC product or work to translate into something suited for per-site attribution
+$$ \log(\text{E}[n]) = \alpha + f(\text{year}) + \beta \cdot \log(\text{dasqkm_tot}) + \text{offset} $$
+$$ \text{E}[n] \propto (\text{dasqkm_tot})^{\beta} $$
+$$ \text{E}[n] \propto (\text{dasqkm_tot})^{-0.493} $$
 
-st_layers(file.path(dir_data_common, "rc", "Confinement-Confinement_for_Salt_Creek-Frontal_Strait_of_Juan_De_Fuca", "outputs/confinement.gpkg"))
+```{r}
+library(tinyVAST)
+set.seed(101)
+options("tinyVAST.verbose" = T)
 
-x <- st_read(file.path(dir_data_common, "rc", "Confinement-Confinement_for_Salt_Creek-Frontal_Strait_of_Juan_De_Fuca", "outputs/confinement.gpkg"), 
-             layer = "confining_margins"); mapview::mapview(x)
-x <- st_read(file.path(dir_data_common, "rc", "Confinement-Confinement_for_Salt_Creek-Frontal_Strait_of_Juan_De_Fuca", "outputs/confinement.gpkg"), 
-             layer = "confinement_dgos"); mapview::mapview(x)
 
-st_layers(file.path(dir_data_common, "rc", "VBET-Valley_Bottom_for_Salt_Creek-Frontal_Strait_of_Juan_De_Fuca", "outputs/vbet.gpkg"))
-x <- st_read(file.path(dir_data_common, "rc", "VBET-Valley_Bottom_for_Salt_Creek-Frontal_Strait_of_Juan_De_Fuca", "outputs/vbet.gpkg"), 
-             layer = "vbet_igos"); mapview::mapview(x)
-x <- st_read(file.path(dir_data_common, "rc", "VBET-Valley_Bottom_for_Salt_Creek-Frontal_Strait_of_Juan_De_Fuca", "outputs/vbet.gpkg"), 
-             layer = "vbet_full"); mapview::mapview(x)
+fmla <- formula(n ~ 1 + offset(log(lgth_wdth)))
 
+f1 = tinyVAST::tinyVAST(
+  data =  vast_strm_d |> 
+    filter(str_detect(strm, "bernath"), wood_class == "S") |> droplevels() |> 
+    #summary()
+    #drop_na(lgth_wdth) |> 
+    drop_na(cfs_q99) |> 
+    as.data.frame()
+  ,
+  formula = fmla, 
+  family = tinyVAST::nbinom1(), 
+  spatial_domain = vast_strm_g$`LC_Abernathy Creek`,
+  space_column = c("X","Y"),
+  variable_column = "wood_class",
+  time_column = "year",
+  distribution_column = "dist_col", #just a repeated character string
+  space_term = "" #will want time_term and spacetime_term
+  )
+
+f2 <- update(f1, n ~ 1 + s(site, bs = "re") + offset(log(lgth_wdth)))
+f3 <- update(f1, n ~ 1 + s(year) + offset(log(lgth_wdth)))
+f4 <- update(f1, n ~ 1 + s(log(cfs_q99)) + offset(log(lgth_wdth)))
+f5 <- update(f1, n ~ 1 + s(year) + s(log(cfs_q99)) + offset(log(lgth_wdth)))
+f6 <- update(f1, n ~ 1 + s(year) + log(dasqkm_tot) + offset(log(lgth_wdth)))
+f7 <- update(f1, n ~ 1 + log(dasqkm_tot) + offset(log(lgth_wdth)))
+
+##no dice
+#visreg::visreg(f1, "year")
+#performance::check_model(f1)
+
+f1$deviance_explained
+f2$deviance_explained
+f1$sdrep
+f2$sdrep #"Hessian of fixed effects was not positive definite."
+
+#this all seems to say that cfs_q99 worse than 'pure year' for S[mall] in Abernathy...
+f3$deviance_explained
+f4$deviance_explained #worse
+f5$deviance_explained #only slightly better than year only
+f6$deviance_explained #very slightly worse than s(year) only
+AIC(f3) #3899
+AIC(f4) #4150, worse
+AIC(f5) #3903 basically same as year only
+AIC(f6) #3867 very slightly better than year only
+AIC(f7) #4119
+
+# alpha_j: site-level intercepts or site effects (the j index is over sites); Reflects the baseline expected log-count (or log-density) at each site, before accounting for spatiotemporal variation.
+# theta_z: spatiotemporal random effects (indexed over z, latent factors or spatial knots); deviations from the global mean at each latent spatial location or knot; negative estimate means on average the spatial random effect pulls prediction down
+# log_sigma: log of the marginal standard deviation of the spatial random field (how variable the field is across space/time); higher sigma → greater spatial variability in predicted values.
+# log_kappa: log of the spatial decay parameter. In SPDE models (as used by VAST), kappa governs how rapidly spatial correlation decays with distance. Lower kappa → longer spatial correlation range; higher kappa → more local variation.
+
+f3$sdrep
+f4$sdrep #considerably smaller loglambda, higher logsigma
+f5$sdrep
+f6$sdrep
+f7$sdrep
+
+
+#start with single wood size class across streams
+vast_fit <- tibble(
+  cmplx_strm = names(vast_strm_g),
+  g = vast_strm_g
+  ) |> 
+  mutate(
+    d_S = map(
+      cmplx_strm,
+      ~as.data.frame(vast_strm_d) |> 
+        filter(cmplx_strm == .x, wood_class == "S") |> 
+        droplevels()
+    )
+    ,
+    #intercept only 
+    d_S_f0 = map2(
+      d_S, g,
+      ~tinyVAST(
+        data = .x,
+        formula = n ~ 1 + offset(log(lgth_wdth)), # correct for varying survey area
+        family = nbinom1(), #no idea whether this is preferable to nbinom2()
+        spatial_domain = .y,
+        space_column = c("X","Y"),
+        variable_column = "wood_class",
+        time_column = "year",
+        distribution_column = "dist_col", #just a repeated character string
+        space_term = "" #will want time_term and spacetime_term
+      )      
+    )
+    ,
+    ##unclear why update() works on standalone but not list element of same class
+    # class(vast_fit$d_S_f0[[1]])
+    # update(vast_fit$d_S_f0[[1]], n ~ 1 + log(dasqkm_tot) + offset(log(lgth_wdth)))
+    ##but just refitting directly with explicit new formula for now
+    ##can write a wrapper later to tighten up
+    #add drainage area
+    d_S_f1 = map2(
+      d_S, g,
+      ~tinyVAST(
+        data = .x,
+        formula = n ~ 1 + log(dasqkm_tot) + offset(log(lgth_wdth)), # correct for varying survey area
+        family = nbinom1(), #no idea whether this is preferable to nbinom2()
+        spatial_domain = .y,
+        space_column = c("X","Y"),
+        variable_column = "wood_class",
+        time_column = "year",
+        distribution_column = "dist_col", #just a repeated character string
+        space_term = "" #will want time_term and spacetime_term
+      )      
+    )
+    ,
+    #add smooth year
+    d_S_f2 = map2(
+      d_S, g,
+      ~tinyVAST(
+        data = .x,
+        formula = n ~ 1 + s(year) + log(dasqkm_tot) + offset(log(lgth_wdth)), # correct for varying survey area
+        family = nbinom1(), #no idea whether this is preferable to nbinom2()
+        spatial_domain = .y,
+        space_column = c("X","Y"),
+        variable_column = "wood_class",
+        time_column = "year",
+        distribution_column = "dist_col", #just a repeated character string
+        space_term = "" #will want time_term and spacetime_term
+      )      
+    )
+  )
+
+
+vast_fit |> 
+  mutate(
+    across(
+      contains("_f"), 
+      list(
+        #pdH = ~map_dbl(., ~.x$sdrep$pdHess),
+        devxpl = ~map_dbl(., ~.x$deviance_explained),
+        aic = ~map_dbl(., ~AIC(.x))
+        )
+      )
+    # pdH = map_dbl(d_S_f0, ~.x$sdrep$pdHess),
+    # devxpl = map_dbl(d_S_f0, ~.x$deviance_explained),
+    # op = map(
+    #   d_S_f0, \(f){
+    #     gg <- f$data |> 
+    #       mutate(
+    #         p = f$rep$mu_i #p = predict(f)
+    #         ) |> 
+    #       ggplot(aes(n, p, group = site)) + geom_point(alpha = 0.7, size = 0.5) + geom_abline(intercept = 0, linetype = 3)
+    #   }
+    # )
+  )
+
+
+
+
+vast_fit$d_S_f0[[1]]$sdrep
+summary(vast_fit$d_S_f0[[1]]$sdrep, "fixed")
+summary(vast_fit$d_S_f0[[1]]$sdrep, "fixed", p.value = T)
+
+vast_fit$d_S_f0[[1]]
+
+#nice overview: https://library.virginia.edu/data/articles/understanding-deviance-residuals
+quantile(vast_fit$d_S_f0[[1]]$rep$devresid_i) #hoping for roughly even +/- centered on 0, abs(min/max) < 3 
+
+
+tibble(
+  obs = vast_fit$d_S_f0[[1]]$data$n,
+  pred1 = vast_fit$d_S_f0[[1]]$rep$mu_i,
+  #pred2 = predict(vast_fit$d_S_f0[[1]]),
+  rawresid = obs - pred1, #not a thing: residuals(vast_fit$d_S_f0[[1]], type = "response")
+  devresid = vast_fit$d_S_f0[[1]]$rep$devresid_i
+) |> summary()
+
+
+
+
+#phHess is whether the Hessian is positive-definite, if False, go back and refit
+#sdrep will show you your effects and the standard deviation on the estimate. 
+#if the CV of the effect is super high, or the implied CI covers zero, consider dropping that effect
+# then I go to DHARMa
+# then I go back to basics, and just do plots of observed/predicted values
+
+ 
 ```
 
