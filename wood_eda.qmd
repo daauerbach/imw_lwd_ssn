@@ -15,6 +15,165 @@ format:
       margin-width: 20px
 ---
 
+# Intro 
+
+The complex interplay among water, rocks, and trees is fundamental to habitat dynamics in rivers, generating the "beautiful messiness" that supports a rich and abundant riverscape biota (Scott et al. 2022). 
+
+Oversimplification of these interactions through wood removal, channel straightening, and floodplain disconnection has degraded habitat, particularly in long-altered, temperate, forested watersheds. 
+
+In recent decades, such degradation has prompted the active reintroduction of logs and various forms of engineered jams in the western United States, typically intended to benefit aquatic organisms via increased structural diversity (Roni et al. 2015, Ockelford et al. 2024).
+
+Much has been learned from such projects, and consensus has emerged around several general principles: avoid unsuitable locations, designs, and fixed targets for piece counts, while ensuring monitoring and follow-up, especially to address the secondary effects of initial interventions (e.g., Tables 3 and 4 in Ockelford et al. 2024). 
+
+Yet practicable, quantitative management guidelines are still an area of active research, in part due to the logistical challenges of consistent measurement over many years at watershed extents (e.g., Hassan 2022, Martens & Devine 2022, Scott 2024, Ruiz-Villanueva et al. 2024).  
+
+The 'natural wood regime' articulated by Wohl et al. (2019) offers a cogent, coherent theoretical framework to organize such guidance, describing recruitment, storage, and transport processes, each varying in magnitude, duration, frequency, timing, and rate of change.
+
+But the authors of this paradigm also note, "However, until more data are available to accurately parameterize mechanistic, multiscale models of wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes over broad spatial scales will remain difficult" (Wohl et al. 2019).
+
+This paper seeks to reduce uncertainties in how wood density varies in space and time throughout drainage network by analyzing data collected between 2007 and 2024 at *NNN* consistently surveyed reaches within *NNN* small independent basins in western Washington, USA. These data were collected as part of the Intensively Monitored Watersheds (IMW) program, a long-term, multi-location, collaborative evaluation of the population-level effects of habitat rehabilitation practices for Pacific salmon recovery (Bilby et al. 2005; Bennett et al. 2016; Krueger et al. *in prep*). Physical and biological measurements throughout 3-4 neighboring stream networks within each of three IMW 'complexes' enable watershed-scale comparisons of the factors affecting and limiting salmonids in forested basins of the Pacific Northwest (Roni 2005; Bilby et al. 2023).
+
+Within the broader, motivating question of "how can we most effectively define 'target wood regimes' (sensu Wohl et al. 2019) that are formulated to reverse impairments and meet ecosystem service goals?", we deploy a powerful spatiotemporal modeling approach to ask whether basic topographic attributes that are widely available in public hydrography datasets can consistently predict the "woodscape" of characteristic loads and fluxes. 
+
+Our approach accounts for ... and enables us to distinguish...
+
+- spatial network attributes
+- year or NWM, possible to distinguish hydroclim signal from other localized LULC processes?
+
+
+
+## more wood in fluvial geomorph background?
+
+Foundational studies have suggested [key] thresholds (e.g., density inflection at ~5m bankfull width)...but constrained by
+  surveying multiple locations once, inferring via space-for-time
+  or surveying single locations repeatedly, inferring via spatial extrapolation
+
+  - Bilby & Ward 1989
+    - relationship to channel size
+  - Bilby & Ward 1991
+    - .1 x 2m at 70 sites, varied length 100m - 1.5km
+    - count density ~ channel size + forest_harvest (stand age) type
+    - Fig 1 log10(n/m^2) ~ log10(width_m); note odd axis scaling
+    - binned width at <7, 7-10, >10
+    - for frequency and volume responses, saw less separation OG to CC/SG at the smaller sites <5-7m
+    - could examine pool type obs relative to plunge/scour/backwater/dammed results
+
+  - Collins et al. 2002
+    - Nisq vs Sno & Stilly and vs archival
+    
+  - Hassan et al. 2005
+    - Table 1 - survey of 20 studies diam & length values of 'large'
+    - leads to table 2, categorical S-M-L based on ratios of piece length to channel width and piece diameter to depth...and phrasing of 'relative' wood and channel sizes
+    - distinguishing 'headwater' processes by degree of hillslope coupling (decreasing with larger DA and greater bnkw) and lateral constraint as key determinant of dynamics (recruitment, transport, storage); higher-order channels presumably still subject to riparian and hillslope effects _but_ also influence of upstream network;
+      - recruit: nice summary of mass wasting & avalanches for recruitment vs/as-well-as wind, bank erosion
+      - storage: mostly about difficulty of measuring
+      - output [transport plus 'attrition']: in headwaters, movement at highest flows only (esp largest pieces) supposing very episodic dyn
+    - Fig2 (!!) Not have seen this previously is *highly congruent* with 'explorer_lwd' figures!! including 5m inflection noted in text but without the caveats of compiling across studies with varied protocol
+      - can validate as: [Bilby & Ward 1989 density decay with width, central tendency] --> [Hassan et al 2005, also variance decay with width] --> [IMW shows both, multiple basins, several scales] --> and/but why 'hi vs lo' where var greatest in narrow site-reaches/network positions
+      - testable: *"This has important implications for temporal and spatial variability of wood abundance in small streams, indicating that recruitment processes (and rates) from the adjacent hillslopes determine the spatial distribution and abundance of wood, while the time since the last debris flow explains the variance."*
+    - attempt to explain some biogeographic variation in species composition (lifespan) and MAI (mean annual increment); low[er]land riparian longer lived, less disturbance prone, general expectation of lower inputs; then also note physical diffs of mature size trunks with lower/larger/longerlived also requiring considerably deeper flows to mobilize;
+    - gaps: role of mass wasting; relative importance of depletion processes;
+      - *Generally, ecosystem type affects the quality and quantity of wood available to a channel, while the spatial and temporal variability of wood recruitment, storage, and loss depends on variations in hydrology, forest type, and dominant erosion and transport processes. However, the effect of these variables as they change locally across a watershed (from valley bottom to mountaintop) or regionally across the landscape (from maritime to continental climates) is largely unknown and represents a third major knowledge gap.*
+
+  - Fox & Bolton 2007
+    - ref conditions from 150 sites, constraints of 'no upstream logging' and 'no other LU or hydro modification' fundamentally limits locations and scales...
+    - explicitly targeting varied, stratified targets: *"A one-size-fits-all wood target approach may diminish habitat heterogeneity by reducing the natural range of wood conditions. Therefore, knowledge of the natural variation of instream wood loads among different stream types and regions should improve restoration activities as well as the scientific defensibility of regulatory thresholds."*
+    - HMMM, opposite to Bilby, Hassan and IMW decay with larger BFW? *"The number and volume of instream wood per 100 m of channel length generally increase as drainage area increases (linear regression: P , 0.001) and as streams become less confined, particularly in watersheds greater than about 10 km2 in drainage area."*
+    - "Bank-full width is supported as the most significant geomorphic indicator for predicting instream wood volumes and number of pieces" --> but again, this reln appears to be opposite that shown elsewhere of decreasing LWD with increasing BFW
+
+
+  - Roni et al. 2015 Fact, fiction, future
+    - Fig1 based on Abbe & Montgomery 2003 from Queets
+
+  - Lininger & Hilton 2022
+    - redwood long term
+  - Martens & Devine 2022
+    - single visit from 74 site/reaches western Olympics, focus on pool formation relative to wood piece size
+
+  - Wohl et al 2019
+    - Table 1 is nice summary of concepts & assumptions: recruitment/transport/storage relative to mag/freq/dur/timing/roc; other main aspect is the description of 'process-domains'
+    - "However, until more data are available to accurately parameterize mechanistic, multiscale models of wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes over broad spatial scales will remain difficult"
+    - Re: managing for target wood regimes: "documented effects of wood mobility suggest the importance of managing for dynamic rather than static wood loads within river corridors. Managing for wood dynamics is challenging because it requires identifying and managing for processes of wood recruitment and transport, which commonly involve wider and longer portions of a river network than the limited channel segments that are typically the focus of management (e.g., Boyer et al. 2003)."
+  
+
+  - Ockelford et al 2024 - working with wood in western US
+    - Table 4 'likely ineffective' situations is nice summary: one and done, poor location or design, fixed targets, no consideration of secondary
+
+  - Scott 2024 - jams in KingCo
+    - jam measures signif but incompletely pred habitat morphological effects
+    
+  - Ruiz-Villanueva et al. 2024 https://onlinelibrary.wiley.com/doi/abs/10.1002/esp.5765
+
+
+# Methods
+
+## Data collection
+
+Pending decisions about which basins and referencing Krueger et al. *in prep*
+
+Large wood counts were made as part of the broader collection of stream habitat data in the western Washington IMW study. Annual surveys were conducted at sites within three complexes of 10 small, adjacent watersheds: the Strait of Juan de Fuca complex (ST) includes East Twin, West Twin (reference), and Deep creeks; the Hood Canal complex (HC) includes Little Anderson, Big Beef, Seabeck and Stavis (reference) creeks; the Lower Columbia complex (LC) includes Germany, Abernathy, and Mill (reference) creeks. Sampled site-reaches were identified using a random, spatially balanced design stratified by stream order (Stevens and Olsen 2004), with surveys conducted between June and October following standardized protocols based on established assessments (Lazorchak et al. 1998, Crawford et al. 2002, Roper et al. 2003). Data from 2007 onward are presented here. At each site in each year, measurements and counts are made at and between 21 equally spaced cross-sectional transects, positioned equidistant and perpendicular to flow along a length of stream that is the longer of either 40 bankfull widths or 300m. Measurements at each transect included bankfull width (to the nearest 0.0 m), water depth (≥5 points to the nearest 0.00 m), and tallies of substrate size classes. Wood within the bankfull channel was counted by length and diameter classes between transects. Substrate was classified at approximately 5 points per transect as either smooth bedrock or rough bedrock (> 4 m), boulder (250 – 4000 mm), cobble (64 – 250 mm), coarse gravel (16 – 64 mm), fine gravel (2 – 16 mm), sand (0.06 – 2 mm), fines (< 2 mm), hardpan, wood, or other. When found, dry channels were sampled and all possible measurements were made (e.g., depth is not measured).
+
+*More detail on length and diameter classes and scoring and QAQC and standardization*
+
+## Analysis
+
+Dataset:
+  - response: longitudinal/time series of yearly 2007-2024 counts (by size class) with offset at sites (20-30) nested in streams (10) in complexes (3)
+    - spatial (strong) and temporal (modest) autocorrelation
+    - randomized sampling design but order of magnitude diff in sampling density as sites/stream_km and imperfectly uniform network coverage
+  - predictors: 
+    - atemporal physiographic/spatial stream network attributes - drainage/contributing area, site/reach slope (gradient)
+    - time varying: year and/or regional hydroclimate fluctuations actually estimated via NWM3.0 high flow values
+    - likely subject to similar spatiotemporal autocorrelation(s) as the response
+
+*Pending final VAST decisions, but generally 1) stratify to S/M/L 2) use SSNbler for network prep 3) use tinyVAST to fit 4) include NWM extension?*
+
+- restratification of counts to SML
+  - supp table and figure
+- 'steady state' spatial: (count | density) ~ bankfull ---> DA? + slope + elev
+  - redo SSN with S-M-L response stratification; upArea corr with DA enough to drop?
+- change relative to NWM
+  - strat by SML --> S more responsive 90/50, M-L to max?
+  - separate site series onto comid Q
+  - corr of diff?
+  - threshold (power?)
+- 3 vs more non-ref basins
+
+- HRCD/NLCD?
+
+- Reduced to sites with complete or nearly complete series (BIB drops above Symington?)
+- ACF, AR1 as well as or instead of CV? KPSS?
+- corrr::correlate(method = "kendall") |> corrr::shave() |> corrr::rplot(print_cor = T) + scale_x_discrete(guide = guide_axis(n.dodge = 2))
+
+
+# Results
+
+- summarize landscape-scale numbers with `predict(newdata = other_NHDplusHR_basins)`?
+
+# Discussion
+
+- wood and its interactions with flow and sediment are fundamental to riverscape habitat dynamics
+
+- reducing uncertainty in the spatiotemporal variation  is necessary to reach a more systematized legal and policy framework of 'target wood regimes' formulated to reverse impairments and meet other ecosystem service goals (Wohl et al. 2019), in the context of existing instream or environmental flow rules and in conjunction with riparian and upland land management practices.
+
+
+- Legally binding 'instream wood' requirements akin to stipulated flows at gaged control points?
+
+  - McHenry et al. 1998
+    - single repeat/contrast 82 vs 93 for 28 100m reaches, differentiating stable counts from decreased volumes due to OG loss
+    - potentially useful contrast 
+
+scraps
+ - A general pathologic condition has been identified (lack of wood), and a therapeutic approach has been proposed and adopted (add wood), but much remains to be learned about exactly what doses, delivered when, where and how will provide the most benefit across the range of individual watershed 'patients'.
+ - Current best practice in stream rehabilitation seeks to identify 'limiting factors' and tailor 'process-based' interventions to ameliorate them.
+
+
+# Cited
+
+Peterson E. E., Dumelle, M., Pearse A., Teleki D., and Ver Hoef, J. M. (2024). SSNbler: Assemble SSN objects in R. R package version 0.1.0
+
+Thorson, J. T., Anderson, S. C., Goddard, P., & Rooper, C. N. (2025). tinyVAST: R package with an expressive interface to specify lagged and simultaneous effects in multivariate spatio-temporal models. Global Ecology and Biogeography. 34(4): e70035. https://doi.org/10.1111/geb.70035
+
 
 
 ```{r setup}
@@ -979,15 +1138,6 @@ Prelim finding: basic physiographic/network-position measures can account for mu
   
 - spatial extension via RC VBET or DNR RShydro valley attrib?
 
-Dataset:
-  - response: longitudinal/time series of yearly 2007-2024 counts (by size class) with offset at sites (20-30) nested in streams (10) in complexes (3)
-    - spatial (strong) and temporal (modest) autocorrelation
-    - randomized sampling design but order of magnitude diff in sampling density as sites/stream_km and imperfectly uniform network coverage
-  - predictors: 
-    - atemporal physiographic/spatial stream network attributes - drainage/contributing area, site/reach slope (gradient)
-    - time varying: year and/or regional hydroclimate fluctuations actually estimated via NWM3.0 high flow values
-    - likely subject to similar spatiotemporal autocorrelation(s) as the response
-
 
 sf map sd of arealdensity
 
@@ -1471,7 +1621,7 @@ $$ \log(\text{E}[n]) = \alpha + f(\text{year}) + \beta \cdot \log(\text{dasqkm_t
 $$ \text{E}[n] \propto (\text{dasqkm_tot})^{\beta} $$
 $$ \text{E}[n] \propto (\text{dasqkm_tot})^{-0.493} $$
 
-```{r}
+```{r more_test_vast}
 library(tinyVAST)
 set.seed(101)
 options("tinyVAST.verbose" = T)
@@ -1507,6 +1657,14 @@ f7 <- update(f1, n ~ 1 + log(dasqkm_tot) + offset(log(lgth_wdth)))
 ##no dice
 #visreg::visreg(f1, "year")
 #performance::check_model(f1)
+
+## JH thoughts:
+#phHess is whether the Hessian is positive-definite, if False, go back and refit
+#sdrep will show you your effects and the standard deviation on the estimate. 
+#if the CV of the effect is super high, or the implied CI covers zero, consider dropping that effect
+# then I go to DHARMa
+# then I go back to basics, and just do plots of observed/predicted values
+
 
 f1$deviance_explained
 f2$deviance_explained
@@ -1611,21 +1769,37 @@ vast_fit |>
       list(
         #pdH = ~map_dbl(., ~.x$sdrep$pdHess),
         devxpl = ~map_dbl(., ~.x$deviance_explained),
-        aic = ~map_dbl(., ~AIC(.x))
+        aic = ~map_dbl(., ~AIC(.x)),
+        caic = ~map_dbl(., ~cAIC(.x))
         )
       )
-    # pdH = map_dbl(d_S_f0, ~.x$sdrep$pdHess),
-    # devxpl = map_dbl(d_S_f0, ~.x$deviance_explained),
-    # op = map(
-    #   d_S_f0, \(f){
-    #     gg <- f$data |> 
-    #       mutate(
-    #         p = f$rep$mu_i #p = predict(f)
-    #         ) |> 
-    #       ggplot(aes(n, p, group = site)) + geom_point(alpha = 0.7, size = 0.5) + geom_abline(intercept = 0, linetype = 3)
-    #   }
-    # )
   )
+
+
+op <- vast_fit |> 
+  mutate(
+    across(contains("_f"), list(pred = ~map(., ~.x$rep$mu_i)))
+  ) |> 
+  select(d_S, ends_with("pred")) |> 
+  unnest(everything()) |>
+  select(cmplx_strm:site, dasqkm_tot, year, obs = n, ends_with("_pred")) |> 
+  pivot_longer(c(ends_with("_pred")), names_to = "alt", values_to = "pred")
+
+op |> 
+  ggplot() +
+  geom_point(aes(obs, pred, color = alt, group = site), alpha = 0.5, size = 0.7) +
+  geom_abline(intercept = 0) +
+  wacolors::scale_color_wa_d() +
+  #facet_wrap(~cmplx_strm, scales = "free", nrow = 2)
+##needs big monitor and should prob split by strm to keep y-scale fixed across alts
+  facet_wrap(~cmplx_strm + alt, labeller = label_wrap_gen(multi_line = F), scales = "free", ncol = 3)
+
+op |> 
+  ggplot() +
+  ggridges::geom_density_ridges(aes(obs, site, fill = cmplx_strm)) +
+  ggridges::geom_density_ridges(aes(pred, site, fill = cmplx_strm, alpha = alt)) +
+  scale_fill_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) + 
+  facet_wrap(~cmplx_strm, scales = "free", nrow = 1)
 
 
 
@@ -1648,14 +1822,6 @@ tibble(
   devresid = vast_fit$d_S_f0[[1]]$rep$devresid_i
 ) |> summary()
 
-
-
-
-#phHess is whether the Hessian is positive-definite, if False, go back and refit
-#sdrep will show you your effects and the standard deviation on the estimate. 
-#if the CV of the effect is super high, or the implied CI covers zero, consider dropping that effect
-# then I go to DHARMa
-# then I go back to basics, and just do plots of observed/predicted values
 
  
 ```
