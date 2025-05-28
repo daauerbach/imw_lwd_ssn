@@ -128,6 +128,25 @@ Dataset:
 
 *Pending final VAST decisions, but generally 1) stratify to S/M/L 2) use SSNbler for network prep 3) use tinyVAST to fit 4) include NWM extension?*
 
+  - is `nbinom2()` or even a poisson preferable?
+    - https://github.com/vast-lib/tinyVAST/issues/60
+  - is (1|site) sensible given the spatial field?
+    - JH: could be, sort of roughly correspondent
+  - multivariate response?
+    - more in terms of sem writing S<->M<->L {pools/gravel/etc.}
+  - continue to fit all streams separately or pool by complex via a dummy marine node?
+  - what is the best way to differentiate space and time and to describe the differentiation?
+    - how does the VAST 'spatial domain' graph of topology/spatial autoreg/autocorr(?) relate to the (spatially-influenced) covariates? 
+    - are longitudinal hydrologic linkages actually being captured?
+  - rather than any stepwise model selection within da/elev/slope, just examine intercept-only vs 3pred 'full' spatial vs with-year vs both year and 3pred?
+    - model form alts
+      1. intercept only
+      2. da/elev/slope
+      3. year only? (any point to '+year' vs s(year)? what about other AR process?)
+      4. da/elev/slope + year
+
+
+
 - restratification of counts to SML
   - supp table and figure
 - 'steady state' spatial: (count | density) ~ bankfull ---> DA? + slope + elev
@@ -175,6 +194,7 @@ Peterson E. E., Dumelle, M., Pearse A., Teleki D., and Ver Hoef, J. M. (2024). S
 Thorson, J. T., Anderson, S. C., Goddard, P., & Rooper, C. N. (2025). tinyVAST: R package with an expressive interface to specify lagged and simultaneous effects in multivariate spatio-temporal models. Global Ecology and Biogeography. 34(4): e70035. https://doi.org/10.1111/geb.70035
 
 
+# Script
 
 ```{r setup}
 library("tidyverse", quietly = T)
@@ -262,6 +282,8 @@ sf_edges <- map_df(
 #sf_edges |> split(~strm) |> map(~ggplot(.x) + geom_sf(aes(color = strm)) + scale_color_manual(values = pal_strm)) |> wrap_plots()
 
 ```
+
+## prelim figs
 
 demonstrating restratification by 75th quantile of count values per class, associating d10_l30 (skinny but long) with d20_l30 and the 2 shorter d30 classes
 ```{r f_supp_wood_classes}
@@ -1614,8 +1636,6 @@ summary(vast_strm_d)
 ```
 
 
- - is `nbinom2()` or even a poisson preferable?
- - is (1|site) sensible given the spatial field? 
 
 $$ \log(\text{E}[n]) = \alpha + f(\text{year}) + \beta \cdot \log(\text{dasqkm_tot}) + \text{offset} $$
 $$ \text{E}[n] \propto (\text{dasqkm_tot})^{\beta} $$
@@ -1802,17 +1822,13 @@ op |>
   facet_wrap(~cmplx_strm, scales = "free", nrow = 1)
 
 
-
-
+vast_fit$d_S_f0[[1]]
 vast_fit$d_S_f0[[1]]$sdrep
 summary(vast_fit$d_S_f0[[1]]$sdrep, "fixed")
 summary(vast_fit$d_S_f0[[1]]$sdrep, "fixed", p.value = T)
 
-vast_fit$d_S_f0[[1]]
-
 #nice overview: https://library.virginia.edu/data/articles/understanding-deviance-residuals
 quantile(vast_fit$d_S_f0[[1]]$rep$devresid_i) #hoping for roughly even +/- centered on 0, abs(min/max) < 3 
-
 
 tibble(
   obs = vast_fit$d_S_f0[[1]]$data$n,
@@ -1821,8 +1837,215 @@ tibble(
   rawresid = obs - pred1, #not a thing: residuals(vast_fit$d_S_f0[[1]], type = "response")
   devresid = vast_fit$d_S_f0[[1]]$rep$devresid_i
 ) |> summary()
-
-
  
+```
+
+
+
+```{r starting_on_wrap_vast}
+library(tinyVAST)
+set.seed(101)
+options("tinyVAST.verbose" = T)
+
+wrap_vast <- function(
+    d, #dataset
+    g, #spatial [graph] domain
+    f, 
+    s_col = c("X","Y"),
+    fam = nbinom1(),
+    v_col = "wood_class", 
+    t_col = "year",
+    dist_col = "dist_col",
+    s_term = ""
+    #will want time_term and spacetime_term
+    #t_term
+    #st_term
+    ){
+  try(tinyVAST(
+        data = d, 
+        spatial_domain = g, 
+        space_column = s_col,
+        formula = f,
+        family = fam,
+        variable_column = v_col,
+        time_column = t_col,
+        distribution_column = dist_col,
+        space_term = s_term
+      )
+  )
+}
+
+#checking s(year) 
+vast_fit <- tibble(
+  cmplx_strm = names(vast_strm_g),
+  g = vast_strm_g
+  ) |> 
+  mutate(
+    d_S = map(
+      cmplx_strm,
+      ~as.data.frame(vast_strm_d) |> 
+        filter(cmplx_strm == .x, wood_class == "S") |> 
+        droplevels()
+    ),
+    d_M = map(
+      cmplx_strm,
+      ~as.data.frame(vast_strm_d) |> 
+        filter(cmplx_strm == .x, wood_class == "M") |> 
+        droplevels()
+    ),
+    d_L = map(
+      cmplx_strm,
+      ~as.data.frame(vast_strm_d) |> 
+        filter(cmplx_strm == .x, wood_class == "L") |> 
+        droplevels()
+    )
+    ,
+    d_S_f_smth_yr = map2(
+      d_S, g, ~wrap_vast(d = .x, g = .y, f = n ~ 1 + s(year) + offset(log(lgth_wdth)))
+    ),
+    d_M_f_smth_yr = map2(
+      d_M, g, ~wrap_vast(d = .x, g = .y, f = n ~ 1 + s(year) + offset(log(lgth_wdth)))
+    ),
+    d_L_f_smth_yr = map2(
+      d_L, g, ~wrap_vast(d = .x, g = .y, f = n ~ 1 + s(year) + offset(log(lgth_wdth)))
+    )
+  )
+
+
+
+#large wood_class fits not okay for BBC, LA, Stavis
+vast_fit |> 
+  mutate(
+    across(
+      contains("_f_")
+      , 
+      list(
+        pdH = ~map_dbl(., ~if(class(.x)=="tinyVAST"){.x$sdrep$pdHess}else{NA_real_})
+      )
+    )
+  )
+
+
+#still need means to compare among streams/dataset sizes
+vast_fit |> 
+  mutate(
+    across(
+      c(contains("_S_f_"), contains("_M_f_"))
+      #contains("_f_")
+      , 
+      list(
+        pdH = ~map_dbl(., ~if(class(.x)=="tinyVAST"){.x$sdrep$pdHess}else{NA_real_}),
+        devxpl = ~map_dbl(., ~if(class(.x)=="tinyVAST"){.x$deviance_explained}else{NA_real_}),
+        aic = ~map_dbl(., ~if(class(.x)=="tinyVAST"){AIC(.x)}else{NA_real_}),
+        caic = ~map_dbl(., ~if(class(.x)=="tinyVAST"){cAIC(.x)}else{NA_real_})
+      )
+    )
+  ) |> 
+  select(cmplx_strm, contains("yr_"))
+
+map(vast_fit$d_S_f_smth_yr, ~.x$sdrep)
+map(vast_fit$d_M_f_smth_yr, ~.x$sdrep)
+
+
+op <- vast_fit |> 
+  mutate(
+    across(contains("_S_f_"), list(pred = ~map(., ~.x$rep$mu_i)))
+  ) |> 
+  select(d_S, ends_with("pred")) |> 
+  unnest(everything()) |>
+  select(cmplx_strm:site, dasqkm_tot, year, obs = n, ends_with("_pred")) |> 
+  pivot_longer(c(ends_with("_pred")), names_to = "alt", values_to = "pred")
+
+op |> 
+  ggplot() +
+  geom_point(aes(obs, pred, color = alt, group = site), alpha = 0.5, size = 0.7) +
+  geom_abline(intercept = 0) +
+  wacolors::scale_color_wa_d() +
+  #facet_wrap(~cmplx_strm, scales = "free", nrow = 2)
+  facet_wrap(~cmplx_strm+site, labeller=label_wrap_gen(multi_line = F), scales = "free") + theme(text = element_text(size = 4))
+
+op |> 
+  ggplot() +
+  ggridges::geom_density_ridges(aes(obs, site, fill = cmplx_strm), alpha = 0.8) +
+  ggridges::geom_density_ridges(aes(pred, site, fill = cmplx_strm), alpha = 0.3) +
+  scale_fill_manual(values = pal_cmplx_strm, aesthetics = c("color","fill")) + 
+  facet_wrap(~cmplx_strm, scales = "free", nrow = 1) +
+  guides(color = guide_none(), fill = guide_none())
+
+
+op |> 
+  mutate(
+    rr = obs - pred
+  ) |> 
+  summarise(
+#    me = mean(rr),
+    mae = mean(abs(rr)),
+    rmse = sqrt(mean(rr^2))
+    ,
+    .by = c(cmplx_strm, site)
+  ) |> 
+  left_join(
+    vast_strm_d |> distinct(site, dasqkm_tot, elev_min, slope), by = "site"
+  ) |> 
+  # ggplot() +
+  # #geom_point(aes(mae, rmse)) +
+  # #geom_point(aes(dasqkm_tot, rmse)) +
+  # geom_point(aes(dasqkm_tot, slope, size = rmse), alpha = 0.5) + scale_size_binned_area() +
+  # facet_wrap(~cmplx_strm, scales = "free", nrow = 2)
+
+  GGally::ggpairs(columns = 3:7, mapping = aes(color = cmplx_strm, group = site, alpha = 0.5)) +  scale_fill_manual(values = pal_cmplx_strm, aesthetics = c("color","fill"))
+
+#interesting how clearly the ABE resto sites show up
+sf_site_meta |> 
+  select(1:6) |> 
+  inner_join(
+    op |> 
+      mutate(rr = obs - pred) |> 
+      summarise(mae = mean(abs(rr)), .by = c(site))
+    , by = "site"
+  ) |> 
+  split(~cmplx_abrv) |> 
+  map(
+    ~.x |> ggplot() + 
+      geom_sf(data = filter(sf_edges, str_detect(cmplx_strm, str_sub(.x$cmplx_strm[1],1,2))), linewidth = 0.5, color = "lightblue") +
+      geom_sf(aes(color = mae, size = mae)) +
+      wacolors::scale_color_wa_c("puget")
+  ) |> 
+  wrap_plots(nrow = 1)
+
+
+```
+
+```{r test_sem_figure}
+matrix(c(
+  "da","S",
+  "da","M",
+  "da","L",
+  "slope","S",
+  "slope","M",
+  "slope","L",
+  "ripar_lulc","S",
+  "ripar_lulc","M",
+  "ripar_lulc","L",
+  "S","S",
+  "M","M",
+  "L","L",
+  #"M","S",
+  #"L","M",
+  #"L","S",
+  "S","pool_depth",
+  "M","pool_depth",
+  "L","pool_depth",
+  "S","parr/spawner",
+  "M","parr/spawner",
+  "L","parr/spawner",
+  "pool_depth","parr/spawner"
+), ncol = 2, byrow = T) |> 
+  igraph::graph_from_edgelist() |> 
+  igraph::add_layout_(igraph::as_tree()) |> #igraph::V()
+  igraph::plot.igraph(
+    vertex.color = c("grey","tan","tan","tan","grey",alpha("darkgreen",0.6),"blue","salmon")
+    )
+
 ```
 
