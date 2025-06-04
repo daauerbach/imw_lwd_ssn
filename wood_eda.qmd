@@ -17,23 +17,15 @@ format:
 
 # Intro 
 
-The complex interplay among water, rocks, and trees is fundamental to habitat dynamics in rivers, generating the "beautiful messiness" that supports a rich and abundant riverscape biota (Scott et al. 2022). 
+The complex interplay among water, rocks, and trees is fundamental to habitat dynamics in rivers, generating the beautiful "messiness" that supports a rich and abundant riverscape biota (Scott et al. 2022). But oversimplification of these interactions through wood removal, channel straightening, and floodplain disconnection has degraded habitat, particularly in long-altered, temperate, forested watersheds. 
 
-Oversimplification of these interactions through wood removal, channel straightening, and floodplain disconnection has degraded habitat, particularly in long-altered, temperate, forested watersheds. 
+In recent decades, such degradation has prompted the active reintroduction of logs and various forms of engineered wood jams in the western United States, typically intended to benefit aquatic organisms via increased structural diversity (Roni et al. 2015, Ockelford et al. 2024). Much has been learned from such projects, and consensus has emerged around several general principles: avoid unsuitable locations, designs, and fixed targets for piece counts, while ensuring monitoring and follow-up, especially to address the secondary effects of initial interventions (e.g., Tables 3 and 4 in Ockelford et al. 2024). Yet practicable, quantitative management guidelines are still an area of active research, in part due to the logistical challenges of consistent measurement over many years at watershed extents (e.g., Hassan 2022, Martens & Devine 2022, Scott 2024, Ruiz-Villanueva et al. 2024).  
 
-In recent decades, such degradation has prompted the active reintroduction of logs and various forms of engineered jams in the western United States, typically intended to benefit aquatic organisms via increased structural diversity (Roni et al. 2015, Ockelford et al. 2024).
+The 'natural wood regime' articulated by Wohl et al. (2019) offers a coherent theoretical framework to organize such guidance, describing recruitment, storage, and transport processes, each varying in magnitude, duration, frequency, timing, and rate of change. But the authors of this paradigm also note, "However, until more data are available to accurately parameterize mechanistic, multiscale models of wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes over broad spatial scales will remain difficult" (Wohl et al. 2019).
 
-Much has been learned from such projects, and consensus has emerged around several general principles: avoid unsuitable locations, designs, and fixed targets for piece counts, while ensuring monitoring and follow-up, especially to address the secondary effects of initial interventions (e.g., Tables 3 and 4 in Ockelford et al. 2024). 
+This paper seeks to reduce uncertainties in how wood density varies in space and time throughout drainage networks by analyzing data collected between 2007 and 2024 at *NNN* consistently surveyed reaches within *NNN* small independent basins in western Washington, USA (Krueger et al. *in prep*). These data were collected as part of the Intensively Monitored Watersheds (IMW) program, a long-term, multi-location, collaborative evaluation of the population-level effects of habitat rehabilitation practices for Pacific salmon recovery (Bilby et al. 2005; Bennett et al. 2016). Physical and biological measurements made throughout 3-4 neighboring stream networks within each of three IMW 'complexes' enable watershed-scale comparisons of the factors affecting and limiting salmonids in forested basins of the Pacific Northwest (Roni 2005; Bilby et al. 2023; Krueger et al. *in prep*).
 
-Yet practicable, quantitative management guidelines are still an area of active research, in part due to the logistical challenges of consistent measurement over many years at watershed extents (e.g., Hassan 2022, Martens & Devine 2022, Scott 2024, Ruiz-Villanueva et al. 2024).  
-
-The 'natural wood regime' articulated by Wohl et al. (2019) offers a cogent, coherent theoretical framework to organize such guidance, describing recruitment, storage, and transport processes, each varying in magnitude, duration, frequency, timing, and rate of change.
-
-But the authors of this paradigm also note, "However, until more data are available to accurately parameterize mechanistic, multiscale models of wood regimes across regions (Scott and Wohl 2018), characterizing wood regimes over broad spatial scales will remain difficult" (Wohl et al. 2019).
-
-This paper seeks to reduce uncertainties in how wood density varies in space and time throughout drainage network by analyzing data collected between 2007 and 2024 at *NNN* consistently surveyed reaches within *NNN* small independent basins in western Washington, USA. These data were collected as part of the Intensively Monitored Watersheds (IMW) program, a long-term, multi-location, collaborative evaluation of the population-level effects of habitat rehabilitation practices for Pacific salmon recovery (Bilby et al. 2005; Bennett et al. 2016; Krueger et al. *in prep*). Physical and biological measurements throughout 3-4 neighboring stream networks within each of three IMW 'complexes' enable watershed-scale comparisons of the factors affecting and limiting salmonids in forested basins of the Pacific Northwest (Roni 2005; Bilby et al. 2023).
-
-Within the broader, motivating question of "how can we most effectively define 'target wood regimes' (sensu Wohl et al. 2019) that are formulated to reverse impairments and meet ecosystem service goals?", we deploy a powerful spatiotemporal modeling approach to ask whether basic topographic attributes that are widely available in public hydrography datasets can consistently predict the "woodscape" of characteristic loads and fluxes. 
+Within the broader, motivating question of "how can we most effectively define 'target wood regimes' (sensu Wohl et al. 2019) that are formulated to reverse impairments and meet ecosystem service goals?", we deploy a powerful spatiotemporal modeling approach to ask whether basic topographic attributes that are widely available in public hydrography datasets can consistently predict the "woodscape" of characteristic loads and fluxes. This "habitat distribution modeling" adapts the dendritic network species distribution modeling that can inform fisheries or other conservation management (Charsley et al. 2023, **MORE CITES?**).
 
 Our approach accounts for ... and enables us to distinguish...
 
@@ -1840,8 +1832,6 @@ tibble(
  
 ```
 
-
-
 ```{r starting_on_wrap_vast}
 library(tinyVAST)
 set.seed(101)
@@ -2046,6 +2036,141 @@ matrix(c(
   igraph::plot.igraph(
     vertex.color = c("grey","tan","tan","tan","grey",alpha("darkgreen",0.6),"blue","salmon")
     )
+
+```
+
+more testing:
+ - passing multiple wood_class levels of 'variable_column' [works]
+ - aggregating to S and ML via rowsplit and bind, better to do earlier if going that route
+
+```{r try_multi_aggreg_class}
+library(tinyVAST)
+
+d_test = droplevels(as.data.frame(filter(vast_strm_d, str_detect(cmplx_strm, "West"))))
+g_test = vast_strm_g$`ST_West Twin River*`
+
+d_test = droplevels(as.data.frame(filter(vast_strm_d, str_detect(cmplx_strm, "Mill"))))
+g_test = vast_strm_g$`LC_Mill Creek*`
+
+d_test = droplevels(as.data.frame(filter(vast_strm_d, str_detect(cmplx_strm, "Stavis"))))
+g_test = vast_strm_g$`HC_Stavis Creek*`
+
+d_test <- bind_rows(
+  filter(d_test, wood_class == "S")
+  ,
+  filter(d_test, wood_class != "S") |> 
+    mutate(wood_class = "ML", n = sum(n), .by = c(site, year)) |> 
+    distinct(site, year, .keep_all = T)
+) |> 
+  mutate(wood_class = factor(wood_class))
+
+summary(d_test)
+summarize(d_test, across(n, list(min = ~min(.), mu = ~mean(.), sd = ~sd(.), v = ~var(.))), .by = wood_class) ggplot(d_test) + geom_histogram(aes(n, fill = wood_class)) + facet_wrap(~wood_class, scales = "free",ncol = 1)
+ggplot(d_test) + geom_density(aes(n, fill = wood_class)) + facet_wrap(~wood_class, scales = "free", ncol = 1)
+ggplot(d_test) + geom_qq(aes(sample = n)) + geom_qq_line(aes(sample = n)) + facet_wrap(~wood_class, scales = "free")
+
+f1 <- tinyVAST(
+  data = d_test, 
+  spatial_domain = g_test,
+  space_column = c("X","Y"),
+  family = nbinom1(), #better than nbinom2() at least for Stavis, S-ML
+  #family = poisson(), #everything but 'deviance explained' says this is worse
+  variable_column = "wood_class",
+  time_column =  "year",
+  distribution_column = "dist_col",
+  space_term = "", #t_term #st_term
+
+  #formula = n ~ 0 + log10(dasqkm_tot) + elev_min + slope + offset(log(lgth_wdth))
+  #formula = n ~ 0 + log10(dasqkm_tot) + elev_min + slope + s(year) + offset(log(lgth_wdth))
+  #formula = n ~ 0 + log10(dasqkm_tot) + elev_min + slope + s(year, by = wood_class) + offset(log(lgth_wdth))
+  #formula = n ~ 0 + log10(dasqkm_tot) + elev_min + slope + wood_class + offset(log(lgth_wdth))
+  #formula = n ~ 0 + log10(dasqkm_tot) + elev_min + slope + wood_class + s(year) + offset(log(lgth_wdth))
+  #formula = n ~ 0 + log10(dasqkm_tot) + elev_min + slope + wood_class + s(year, by = wood_class) + offset(log(lgth_wdth))
+##very marginally better cAIC and prop dev expl for fixed log10(da) vs s(da)
+  #formula = n ~ 0 + s(dasqkm_tot) + wood_class + s(year, by = wood_class) + offset(log(lgth_wdth))
+  #formula = n ~ 0 + log10(dasqkm_tot) + wood_class + s(year, by = wood_class) + offset(log(lgth_wdth))
+  formula = n ~ 0 + log10(dasqkm_tot) + s(year, by = wood_class) + offset(log(lgth_wdth))
+  )
+f1; cAIC(f1); AIC(f1)
+logLik(f1)
+#negbin -4405.573 (df=7)
+#pois -8399.578 (df=6)
+
+glm(n ~ 0 + log10(dasqkm_tot) + offset(log(lgth_wdth)), data = d_test, family = poisson) |> summary()
+MASS::glm.nb(n ~ 0 + log10(dasqkm_tot) + offset(log(lgth_wdth)), data = d_test) |> summary()
+
+```
+
+```{r reprex_pois_vs_nb}
+library(tidyverse)
+
+s <- st_read(
+  file.path(
+    system.file("stream_network",package="tinyVAST"),
+    "East_Fork_Lewis_basin.shp"), quiet=TRUE
+  ) |> 
+  sfnetworks::as_sfnetwork() 
+g <- tinyVAST::sfnetwork_mesh(s)
+g$table$dist <- g$table$dist / 1000
+
+alpha = 2
+kappa = 0.05
+omega_s = tinyVAST::simulate_sfnetwork(n=1, sfnetwork_mesh=g, theta=kappa)[,1]
+#reduce to fewer sampled sites than orig example
+extrap = as_tibble(s, "edges") |>
+  st_line_sample(n = 1) |> #one per linestring
+  st_union() |> st_cast("POINT")
+extrap = extrap[sample(1:length(extrap), size = 25, replace = F)]
+A_is = tinyVAST::sfnetwork_evaluator(
+  stream = g$stream,
+  loc = st_coordinates(extrap)
+  )
+omega_i = (A_is %*% omega_s)[,1]
+summary(omega_i); summary(alpha + omega_i)
+Count_pois = rpois(n=length(omega_i), lambda=exp(alpha + omega_i))
+Count_nb = rnbinom(n=length(omega_i), mu=exp(alpha + omega_i), size = .1) #tried a few 'size' values
+summary(Count_pois); hist(Count_pois)
+summary(Count_nb); hist(Count_nb)
+
+ggplot() + 
+  geom_sf(data = as_tibble(g$stream, "nodes") |> mutate(omega_s = omega_s), aes(color = omega_s)) +
+  geom_sf(data = as_tibble(g$stream, "edges") |> mutate(omega_s = omega_s[from]), aes(color = omega_s)) +
+  geom_sf(data = st_as_sf(extrap) |> mutate(n = Count_pois), aes(size = n, fill = n), shape = 24, color = "grey") +
+  scale_size_area(max_size = 4)
+
+Data_pois = data.frame(
+  Count = Count_pois, st_coordinates(extrap),
+  var = "species", time = "2020", dist = "obs")   
+Data_nb = data.frame(
+  Count = Count_nb, st_coordinates(extrap),
+  var = "species", time = "2020", dist = "obs")   
+
+tibble(
+  sim_count = c("pois","nb"),
+  d = list(Data_pois, Data_nb)
+  ) |> 
+  mutate(
+    fit_pois = map(d, ~tinyVAST::tinyVAST(
+      data = .x, family = poisson(),
+      formula = Count ~ 1,
+      spatial_domain = g, space_column = c("X","Y"),
+      variable_column = "var", time_column = "time",
+      distribution_column = "dist",
+      space_term = ""))
+    ,
+    fit_nb1 = map(d, ~tinyVAST::tinyVAST(
+      data = .x, family = nbinom1(),
+      formula = Count ~ 1,
+      spatial_domain = g, space_column = c("X","Y"),
+      variable_column = "var", time_column = "time",
+      distribution_column = "dist",
+      space_term = ""))
+    ,
+    across(c(fit_pois, fit_nb1), list(cAIC = ~map_dbl(., ~cAIC(.x))))
+    ,
+    across(c(fit_pois, fit_nb1), list(devExp = ~map_dbl(., ~.x$deviance_explained)))
+  )
+
 
 ```
 
