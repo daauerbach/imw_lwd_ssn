@@ -2069,12 +2069,13 @@ summarize(d_test, across(n, list(min = ~min(.), mu = ~mean(.), sd = ~sd(.), v = 
 ggplot(d_test) + geom_density(aes(n, fill = wood_class)) + facet_wrap(~wood_class, scales = "free", ncol = 1)
 ggplot(d_test) + geom_qq(aes(sample = n)) + geom_qq_line(aes(sample = n)) + facet_wrap(~wood_class, scales = "free")
 
+ggplot(d_test) + geom_density(aes(log(n), fill = wood_class)) + facet_wrap(~wood_class, scales = "free", ncol = 1)
+
 f1 <- tinyVAST(
-  data = d_test, 
+  data = d_test #|> mutate(n = log1p(n)) #|> summary()
+  , 
   spatial_domain = g_test,
   space_column = c("X","Y"),
-  family = nbinom1(), #better than nbinom2() at least for Stavis, S-ML
-  #family = poisson(), #everything but 'deviance explained' says this is worse
   variable_column = "wood_class",
   time_column =  "year",
   distribution_column = "dist_col",
@@ -2090,6 +2091,18 @@ f1 <- tinyVAST(
   #formula = n ~ 0 + s(dasqkm_tot) + wood_class + s(year, by = wood_class) + offset(log(lgth_wdth))
   #formula = n ~ 0 + log10(dasqkm_tot) + wood_class + s(year, by = wood_class) + offset(log(lgth_wdth))
   formula = n ~ 0 + log10(dasqkm_tot) + s(year, by = wood_class) + offset(log(lgth_wdth))
+  ,
+  #family = nbinom1() #better than nbinom2() at least for Stavis, S-ML
+  family = poisson() #everything but 'deviance explained' says this is worse
+  #family = lognormal()
+
+  # family = delta_lognormal(type = "poisson-link"),
+  # delta_options = list(
+  #   formula = ~ 0 + log10(dasqkm_tot) + s(year, by = wood_class) + offset(log(lgth_wdth)),
+  #   space_term = ""
+  #   #,spacetime_term = ""
+  #   )
+
   )
 f1; cAIC(f1); AIC(f1)
 logLik(f1)
@@ -2098,6 +2111,19 @@ logLik(f1)
 
 glm(n ~ 0 + log10(dasqkm_tot) + offset(log(lgth_wdth)), data = d_test, family = poisson) |> summary()
 MASS::glm.nb(n ~ 0 + log10(dasqkm_tot) + offset(log(lgth_wdth)), data = d_test) |> summary()
+
+#zero inflation not a concern when aggregating M+L
+#but still potential overdispersion
+#try log1p(n) and family = lognormal?
+d_test |> count(wood_class, n>0)
+bind_rows(
+  filter(vast_strm_d, wood_class == "S")
+  ,
+  filter(vast_strm_d, wood_class != "S") |> 
+    mutate(wood_class = "ML", n = sum(n), .by = c(site, year)) |> 
+    distinct(site, year, .keep_all = T)
+) |> 
+  count(wood_class, n>0)
 
 ```
 
@@ -2171,6 +2197,97 @@ tibble(
     across(c(fit_pois, fit_nb1), list(devExp = ~map_dbl(., ~.x$deviance_explained)))
   )
 
+
+```
+
+```{r toying_with_ts}
+#https://github.com/zhaokg/Rbeast
+install.packages("Rbeast")
+?Rbeast
+
+d <- vast_strm_d |> 
+  select(cmplx_strm:site, year, lgth_wdth, wood_class, n) |> 
+  group_by(cmplx_strm, cmplx_abrv, cmplx_desc, strm, site, wood_class) |> 
+  complete(year = 2007:2024) |> 
+  ungroup()
+
+glimpse(d)
+summary(d)
+
+b <- d |> 
+  filter(wood_class == "S") |> #summary()
+  #ggplot(aes(year, n, group = site)) + geom_col() + facet_wrap(~site)  
+  #filter(site == "STA003") |> 
+  filter(site == "STA028") |> 
+  pull(n) |> 
+  Rbeast::beast(season = "none")
+b
+plot(b)
+
+#90 fits in a few seconds
+b <- d |> 
+  nest(.by = c(cmplx_strm, cmplx_abrv, cmplx_desc, strm, site, wood_class)) |> 
+  #filter(str_detect(site, "ABR")) |> 
+  filter(str_detect(site, "STA")) |> 
+  mutate(
+    bf = map(
+      data, 
+      ~Rbeast::beast(.x$n, season = "none", quiet = 1)
+      )
+  )
+
+b$bf[[1]] |> str()
+
+b$bf[[3]] |> plot()
+
+
+bb <- b |> 
+  mutate(bf = map(bf, unclass)) |> 
+  hoist(.col = bf, "marg_lik", "R2", "RMSE",
+        ncp_median = list("trend","ncp_median")
+        ,
+        ncpPr0 = list("trend","ncpPr", 1),
+        ncpPr1 = list("trend","ncpPr", 2),
+        ncpPr2 = list("trend","ncpPr", 3)
+        )
+
+#GOF (captions for ABR, looks different for STA)
+{
+  bb |> 
+  ggplot(aes(wood_class, marg_lik, group = site)) +
+  geom_point(aes(color = wood_class), show.legend = F) + 
+  geom_line(linewidth = 0.1, show.legend = F) +
+  labs(
+#    subtitle = "Fit marginal likelihood mostly relatively consistent across wood size classes per-site?"
+  )
+}/{
+bb |> 
+  ggplot(aes(wood_class, R2, group = site)) +
+  geom_point(aes(color = wood_class), show.legend = F) + 
+  geom_line(linewidth = 0.1, show.legend = F) +
+  labs(
+#    subtitle = "But not R2, though unclear what that means here..."
+  )
+}/{
+bb |> 
+  ggplot(aes(marg_lik, R2, group = site)) +
+  geom_point(aes(color = wood_class), show.legend = F) + 
+  facet_wrap(~wood_class) +
+    labs(
+#      subtitle = "But generally pos corr in GOF stats, esp for M & L"
+    )
+}
+
+#this is nice
+bb |> 
+  select(site, wood_class, marg_lik, contains("ncpPr")) |> 
+  pivot_longer(contains("ncpPr"), names_to = "ncpPr", values_to = "Pr") |> 
+  ggplot() +
+  geom_col(aes(Pr, site, fill = ncpPr, alpha = marg_lik)) +
+  facet_wrap(~wood_class) +
+  labs(
+    subtitle = "Per-site, per-class prob. {0|1|2} change points\ndarker = better GOF"
+  )
 
 ```
 
