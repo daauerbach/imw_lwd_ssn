@@ -1,0 +1,408 @@
+---
+title: "IMW~RC"
+author: "dan.auerbach@dfw.wa.gov"
+date: "`r Sys.Date()`"
+format:
+  html:
+    embed-resources: true
+    theme: flatly 
+    code-fold: true
+    toc: true
+    toc-location: left
+    grid:
+      sidebar-width: 180px
+      body-width: 1100px
+      margin-width: 20px
+encoding: UTF-8
+---
+
+next:
+ - fit by complex with stream as fixed or random effect? then compare to single stream fits
+ - add 'local' covars (e.g., vlwd_cv, pct_pools_mean, etc.) to see if they improve model fit
+ - test interactions?
+
+maybe:
+ - rebuild hab measures from emap pull transects?
+ - redo SSNblr from RC dgo objects?
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+#| label: setup
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library("tidyverse", quietly = T)
+library("sf")
+library("mapview")
+library("patchwork")
+library("gt")
+
+library("mgcv")
+library("gratia")
+theme_set(theme_minimal())
+
+load(
+  "~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/imw_lwd_ssn/imw-rc.RData"
+)
+```
+
+```{r envi, evaluate=FALSE}
+#| label: build_envi
+
+load(
+  "~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/imw_hab_251203.RData"
+)
+
+dir_data_common <- "~/T/DFW-Team WDFW Watershed Synthesis - data_common"
+epsg <- 2927 #WA state standard; NAD83(HARN)/ft
+
+sf_wrias <- sf::read_sf(file.path(dir_data_common, "WR_WAT_WRIA.gdb/")) |>
+  mutate(
+    wria = factor(WRIA_NR),
+    wria_nr_nm = factor(paste0(
+      str_pad(WRIA_NR, width = 2, pad = "0", ),
+      "_",
+      WRIA_NM
+    ))
+  ) |>
+  select(WRIA_NR, WRIA_NM, wria, wria_nr_nm, acres = WRIA_AREA_ACR_QT) |>
+  arrange(wria) |>
+  sf::st_transform(sf::st_crs(epsg))
+
+# HUC12 polys for IMW streams
+# full set built in data_common/wsio/huc12getter.R via nhdplusTools::get_huc(AOI = sf::st_union(sf_wrias), type = 'huc12') |> select(huc12, name, areasqkm)
+# here subset to IMW HUC12s with previously manually determined huc12 ids
+sf_wa_huc12_imw <- readRDS(file.path(dir_data_common, "wbd/sf_wa_huc12.rds")) |>
+  filter(
+    huc12 %in%
+      c(
+        "171100210304", #Deep
+        "171100210303", #W Twin
+        "171100210302", #E Twin
+        "171100180107", # BBC incl other HC
+        "170800030605", #Mill
+        "170800030604", #Abernathy
+        "170800030603" #Germany
+      )
+  ) |>
+  mutate(
+    cmplx_desc = case_when(
+      str_detect(name, "Deep|Twin") ~ "Straits of Juan de Fuca",
+      str_detect(name, "Beef") ~ "Hood Canal",
+      str_detect(name, "Mill|Aber|Ger") ~ "Lower Columbia"
+    ),
+    cmplx = case_when(
+      cmplx_desc == "Straits of Juan de Fuca" ~ "ST",
+      cmplx_desc == "Hood Canal" ~ "HC",
+      cmplx_desc == "Lower Columbia" ~ "LC"
+    )
+  ) |>
+  arrange(huc12) |>
+  select(cmplx, cmplx_desc, huc12, huc12_nm = name, huc_area_sq_km = areasqkm)
+
+# # NHDplus catchment polys, built in 'fifo_test_nwm.qmd' chunk 'sf_hr_h12_imw_cat'
+# # intersected all cat centroids with IMW huc12 polys to get comids for IMW catchments
+# # then further filtered to drop some 'marine' cats not in NWM
+# # only needed if comids needed? for NWM or StreamCat or...?
+# sf_cat_imw <- readRDS(
+#   "~/T/DFW-Team WDFW Watershed Synthesis - General/fifo/sf_nhdphr_h12_imw_nhdp_cat.rds"
+# )
+
+# keeping things split by complex for now
+sf_rc_rme_lc <- st_read(
+  "~/T/DFW-Team WDFW Watershed Synthesis - data_common/rc/Metric_Engine-Metric_Engine_for_Germany_Creek-Frontal_Columbia_River/outputs/riverscapes_metrics.gpkg",
+  layer = "vw_dgo_metrics"
+) |>
+  filter(huc12 %in% sf_wa_huc12_imw$huc12) |>
+  rename(dgoid = dgoid.1) |>
+  select(dgoid, everything(), -starts_with("dgoid.")) |>
+  st_transform(epsg)
+
+sf_rc_rme_st <- st_read(
+  "~/T/DFW-Team WDFW Watershed Synthesis - data_common/rc/Metric_Engine-Metric_Engine_for_Salt_Creek-Frontal_Strait_of_Juan_De_Fuca/outputs/riverscapes_metrics.gpkg",
+  layer = "vw_dgo_metrics"
+) |>
+  filter(huc12 %in% sf_wa_huc12_imw$huc12) |>
+  rename(dgoid = dgoid.1) |>
+  select(dgoid, everything(), -starts_with("dgoid.")) |>
+  st_transform(epsg)
+
+# combine IMW site measures and RC covars by complex
+# manual inspection of sites not directly intersecting RC DGOs but distances are mostly very small
+# then manual inspection of join with nearest feature to catch a few misassigned:
+# ABR016 --> should get dgoid 4805, got 4674
+# GER050 --> should get dgoid 14262, got 4179
+# DEW539 --> should get dgoid 2338, got 1589
+# doing two pass - intersect then nearest to reduce chance of joining sites to the wrong DGO metrics
+# further inefficiency in the manual correction of a few misassigned sites that are near confluences or small tribs
+# with rows_update failing for some reason so simply rebinding the corrected rows to the rest of the nearest join results
+sf_site_rme_lc <- st_join(
+  sf_site_meta |>
+    filter(cmplx_abrv == "LC") |>
+    select(
+      cmplx_strm,
+      site,
+      starts_with("year"),
+      ends_with("mean"),
+      ends_with("sd"),
+      -contains("per100"),
+      -contains("vol"),
+      -contains("W_D"),
+      -contains("depth")
+    ) |>
+    mutate(
+      pct_pools_cv = pct_pools_sd / pct_pools_mean,
+      vlwd_cv = vlwd_sd / vlwd_mean
+    ),
+  sf_rc_rme_lc,
+  join = st_intersects,
+  largest = T
+)
+
+nearests <- st_join(
+  sf_site_meta |>
+    semi_join(
+      as_tibble(sf_site_rme_lc) |> filter(is.na(dgoid)) |> distinct(site),
+      by = "site"
+    ) |>
+    select(
+      cmplx_strm,
+      site,
+      starts_with("year"),
+      ends_with("mean"),
+      ends_with("sd"),
+      -contains("per100"),
+      -contains("vol"),
+      -contains("W_D"),
+      -contains("depth")
+    ) |>
+    mutate(
+      pct_pools_cv = pct_pools_sd / pct_pools_mean,
+      vlwd_cv = vlwd_sd / vlwd_mean
+    ),
+  sf_rc_rme_lc,
+  join = st_nearest_feature
+)
+
+nearests <- bind_rows(
+  nearests |>
+    filter(!(site %in% c("ABR016", "GER050"))),
+  nearests |>
+    filter(site %in% c("ABR016", "GER050")) |>
+    mutate(
+      dgoid = if_else(site == "ABR016", 4805, dgoid),
+      dgoid = if_else(site == "GER050", 14262, dgoid)
+    ) |>
+    select(cmplx_strm:dgoid) |>
+    left_join(
+      as_tibble(sf_rc_rme_lc) |>
+        filter(dgoid %in% c(4805, 14262)) |>
+        select(-geom),
+      by = "dgoid"
+    )
+)
+
+# finally, combine the intersected and corrected nearest join results
+sf_site_rme_lc <- bind_rows(
+  drop_na(sf_site_rme_lc, dgoid),
+  nearests
+) |>
+  arrange(cmplx_strm, site)
+
+# now the Straits complex
+sf_site_rme_st <- st_join(
+  sf_site_meta |>
+    filter(cmplx_abrv == "ST") |>
+    select(
+      cmplx_strm,
+      site,
+      starts_with("year"),
+      ends_with("mean"),
+      ends_with("sd"),
+      -contains("per100"),
+      -contains("vol"),
+      -contains("W_D"),
+      -contains("depth")
+    ) |>
+    mutate(
+      pct_pools_cv = pct_pools_sd / pct_pools_mean,
+      vlwd_cv = vlwd_sd / vlwd_mean
+    ),
+  sf_rc_rme_st,
+  join = st_intersects,
+  largest = T
+)
+
+nearests <- st_join(
+  sf_site_meta |>
+    semi_join(
+      as_tibble(sf_site_rme_st) |> filter(is.na(dgoid)) |> distinct(site),
+      by = "site"
+    ) |>
+    select(
+      cmplx_strm,
+      site,
+      starts_with("year"),
+      ends_with("mean"),
+      ends_with("sd"),
+      -contains("per100"),
+      -contains("vol"),
+      -contains("W_D"),
+      -contains("depth")
+    ) |>
+    mutate(
+      pct_pools_cv = pct_pools_sd / pct_pools_mean,
+      vlwd_cv = vlwd_sd / vlwd_mean
+    ),
+  sf_rc_rme_st,
+  join = st_nearest_feature
+)
+
+nearests <- bind_rows(
+  nearests |>
+    filter(!(site %in% c("DEW539"))),
+  nearests |>
+    filter(site %in% c("DEW539")) |>
+    mutate(
+      dgoid = if_else(site == "DEW539", 2338, dgoid)
+    ) |>
+    select(cmplx_strm:dgoid) |>
+    left_join(
+      as_tibble(sf_rc_rme_st) |>
+        filter(dgoid == 2338) |>
+        select(-geom),
+      by = "dgoid"
+    )
+)
+
+sf_site_rme_st <- bind_rows(
+  drop_na(sf_site_rme_st, dgoid),
+  nearests
+) |>
+  arrange(cmplx_strm, site)
+
+rm(nearests)
+
+# # final rechecks
+# mapview(sf_rc_rme_lc, zcol = "prim_channel_gradient") +
+#   mapview(sf_site_rme_lc, zcol = "prim_channel_gradient")
+
+save.image(
+  "~/T/DFW-Team WDFW Watershed Synthesis - IMW analyses/imw_lwd_ssn/imw-rc.RData"
+)
+```
+
+# fit by single stream 
+
+Begin by reproducing separate single basin fits of all covar combos, all smooths, no interactions, then compare deviance explained and AIC to examine best model(s) for each basin.
+
+```{r}
+lhs <- "pct_pools_cv"
+rhs <- c(
+  "prim_channel_gradient",
+  "hect_vb_per_km",
+  "low_lying_ratio",
+  "q2",
+  "sphigh"
+)
+
+mods <- tibble(
+  form = unlist(
+    #lapply(seq_along(v), function(i) combn(v, i, simplify = FALSE)),
+    map(1:length(rhs), \(i) combn(rhs, i, simplify = F)),
+    recursive = FALSE
+  ) |>
+    map(~ paste(lhs, "~ s(", paste(.x, collapse = ") + s("), ")"))
+)
+```
+
+looks like a couple of ST stream/model combos don't converge?
+
+```{r}
+fits_by_stream <- bind_rows(
+  as_tibble(sf_site_rme_lc) |>
+    select(cmplx_strm, site, pct_pools_cv, all_of(rhs)), # |> summary()
+  as_tibble(sf_site_rme_st) |>
+    select(cmplx_strm, site, pct_pools_cv, all_of(rhs)) # |> summary()
+) |>
+  nest(.by = c(cmplx_strm)) |>
+  cross_join(mods) |>
+  mutate(
+    fit = map2(
+      form,
+      data,
+      ~ gam(
+        as.formula(.x),
+        data = .y,
+        family = Gamma(link = "log"),
+        method = "REML"
+      )
+    ),
+    devexpl = map_dbl(fit, ~ summary(.x)[["dev.expl"]]),
+    glance = map(fit, ~ broom::glance(.x))
+  ) |>
+  unnest(form) |>
+  unnest(glance) |>
+  arrange(cmplx_strm, desc(devexpl), AIC)
+```
+
+seems likely that's why devexpl and rsquared are 1 for couple of DeepCk? Except W Twin is also nearly 1 for similar models...
+
+```{r}
+fits_by_stream |>
+  select(cmplx_strm, form, devexpl, AIC, adj.r.squared) |>
+  #slice_max(order_by = devexpl, n = 5, by = cmplx_strm) |>
+  slice_min(order_by = AIC, n = 5, by = cmplx_strm) |>
+  gt(groupname_col = "cmplx_strm") |>
+  fmt_number(
+    columns = c("devexpl", "AIC", "adj.r.squared"),
+    decimals = 2
+  ) |>
+  opt_vertical_padding(scale = 0.5) |>
+  opt_table_font(size = px(10))
+```
+
+need to dig into why these fits might not be as good as the diagnostics suggest...
+
+```{r}
+g <- fits_by_stream |>
+  filter(devexpl < 0.999) |> #arrange(desc(devexpl))
+  slice_min(order_by = AIC, n = 1, by = cmplx_strm) |>
+  select(cmplx_strm, form, devexpl, AIC, adj.r.squared, fit) |>
+  mutate(
+    check = pmap(
+      list(fit, cmplx_strm, form, devexpl),
+      \(m, s, frm, de) {
+        gratia::appraise(m, method = "simulate") +
+          plot_annotation(
+            title = s,
+            subtitle = paste(frm, "devexpl =", round(de, 2))
+          )
+      }
+    )
+  )
+
+g$check
+```
+
+# fit by complex
+
+
+# with with 'local' covars
+
+```{r}
+lhs <- "pct_pools_cv"
+rhs <- c(
+  "vlwd_cv",
+  "prim_channel_gradient",
+  "hect_vb_per_km", #"low_lying_ratio",
+  "q2" #, "sphigh"
+)
+
+mods <- tibble(
+  form = unlist(
+    map(1:length(rhs), \(i) combn(rhs, i, simplify = F)),
+    recursive = FALSE
+  ) |>
+    map(~ paste(lhs, "~ s(", paste(.x, collapse = ") + s("), ")"))
+)
+```
+
