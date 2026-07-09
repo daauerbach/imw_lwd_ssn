@@ -17,6 +17,7 @@ encoding: UTF-8
 ---
 
 next:
+ - re-do fits by stream, stop doing all combos, do all covars (with select=T) and examine (then refit with retained?)
  - fit by complex with stream as fixed or random effect? then compare to single stream fits
  - add 'local' covars (e.g., vlwd_cv, pct_pools_mean, etc.) to see if they improve model fit
  - test interactions?
@@ -37,6 +38,8 @@ library("gt")
 
 library("mgcv")
 library("gratia")
+library("marginaleffects")
+
 theme_set(theme_minimal())
 
 load(
@@ -292,7 +295,11 @@ save.image(
 
 # fit by single stream 
 
+## initial: combn formulas then devexpl/AIC rank
+
 Begin by reproducing separate single basin fits of all covar combos, all smooths, no interactions, then compare deviance explained and AIC to examine best model(s) for each basin.
+
+but need to dig more into why these fits might not be as good as the diagnostics suggest...
 
 ```{r}
 lhs <- "pct_pools_cv"
@@ -314,9 +321,8 @@ mods <- tibble(
 )
 ```
 
-looks like a couple of ST stream/model combos don't converge?
-
-```{r}
+```{r fit_by_stream}
+#| label: fit_by_stream
 fits_by_stream <- bind_rows(
   as_tibble(sf_site_rme_lc) |>
     select(cmplx_strm, site, pct_pools_cv, all_of(rhs)), # |> summary()
@@ -344,9 +350,8 @@ fits_by_stream <- bind_rows(
   arrange(cmplx_strm, desc(devexpl), AIC)
 ```
 
-seems likely that's why devexpl and rsquared are 1 for couple of DeepCk? Except W Twin is also nearly 1 for similar models...
-
-```{r}
+```{r fits_gt}
+#| label: fits_gt
 fits_by_stream |>
   select(cmplx_strm, form, devexpl, AIC, adj.r.squared) |>
   #slice_max(order_by = devexpl, n = 5, by = cmplx_strm) |>
@@ -360,9 +365,8 @@ fits_by_stream |>
   opt_table_font(size = px(10))
 ```
 
-need to dig into why these fits might not be as good as the diagnostics suggest...
-
-```{r}
+```{r fits_appraise}
+#| label: fits_appraise
 g <- fits_by_stream |>
   filter(devexpl < 0.999) |> #arrange(desc(devexpl))
   slice_min(order_by = AIC, n = 1, by = cmplx_strm) |>
@@ -383,26 +387,147 @@ g <- fits_by_stream |>
 g$check
 ```
 
-# fit by complex
+## revised: begin with all of interest and select = TRUE
 
-
-# with with 'local' covars
+and can better specify 'k' per smooth
+and integrate 'local' covars (vlwd_cv, gravel)
+and sets up better shift to fitting by complex with 'stream' as fixed or random effect (as both term and 'by=' in smooth)
 
 ```{r}
 lhs <- "pct_pools_cv"
 rhs <- c(
   "vlwd_cv",
   "prim_channel_gradient",
-  "hect_vb_per_km", #"low_lying_ratio",
-  "q2" #, "sphigh"
+  "hect_vb_per_km",
+  "low_lying_ratio",
+  "q2",
+  "sphigh"
+)
+#as.formula(paste(lhs, "~ s(", paste(rhs, collapse = ") + s("), ")"))
+# begin with default k for all smooths, then can adjust per smooth if needed
+form <- paste(lhs, "~", paste0("s(", rhs, ")", collapse = " + "))
+
+fits_by_stream <- bind_rows(
+  as_tibble(sf_site_rme_lc),
+  as_tibble(sf_site_rme_st)
+) |>
+  select(cmplx_strm, site, all_of(lhs), all_of(rhs)) |> # summary()
+  nest(.by = c(cmplx_strm)) |>
+  mutate(
+    fit = map(
+      data,
+      ~ gam(
+        as.formula(form),
+        data = .x,
+        family = Gamma(link = "log"),
+        method = "REML",
+        select = TRUE
+      )
+    ),
+    devexpl = map_dbl(fit, ~ summary(.x)[["dev.expl"]]),
+    glance = map(fit, ~ broom::glance(.x)),
+    check = map(fit, ~ as_tibble(k.check(.x), rownames = "term"))
+  ) |>
+  unnest(glance) |>
+  mutate(
+    praise = pmap(
+      list(fit, cmplx_strm, devexpl),
+      \(mod, strm, dev) {
+        gratia::appraise(mod, method = "simulate") +
+          plot_annotation(
+            title = strm,
+            subtitle = paste(form, "\ndevexpl =", round(dev, 2))
+          )
+      }
+    )
+  )
+
+fits_by_stream
+```
+
+Interesting or artifact that Germany the only stream with vlwd_cv not shrunk to 0?
+Similarly, interesting that low_lying only retained in ETwin?
+And q2 + sphigh only kept in Mill and Abe?
+Note that larger edf values here do not necessarily correspond to 'signif' terms
+see Abernathy for example, with gradient more 'sig' despite lower edf than hect_vb, and q2 'nonsig' despite edf close to 2
+
+Could perhaps increase k for: 
+ - gradient (maybe sphigh) in Deep
+ - q2 in Mill
+?
+
+```{r kcheck_praise}
+#| label: kcheck_praise
+
+# fits_by_stream$check
+
+# edf near zero, term was shrunk as uninformative
+# across which streams?
+fits_by_stream |>
+  select(cmplx_strm, check) |>
+  unnest(check) |>
+  select(cmplx_strm, term, edf) |>
+  pivot_wider(names_from = term, values_from = edf) |>
+  gt(rowname_col = "cmplx_strm") |>
+  tab_style_body(
+    style = cell_fill(color = "orange"),
+    columns = where(is.numeric), #starts_with("edf"),
+    fn = \(x) x < 0.5
+  ) |>
+  fmt_number(columns = where(is.numeric), decimals = 3) |>
+  opt_vertical_padding(scale = 0.7) |>
+  opt_table_font(size = px(11))
+
+# pval low, maybe increase basis
+fits_by_stream |>
+  select(cmplx_strm, check) |>
+  unnest(check) |>
+  select(cmplx_strm, term, `p-value`) |>
+  pivot_wider(names_from = term, values_from = c(`p-value`)) |>
+  gt(rowname_col = "cmplx_strm") |>
+  tab_style_body(
+    style = cell_fill(color = "yellow"),
+    columns = where(is.numeric), #starts_with("p-"),
+    fn = \(x) x < 0.1
+  ) |>
+  fmt_number(columns = where(is.numeric), decimals = 3) |>
+  opt_vertical_padding(scale = 0.7) |>
+  opt_table_font(size = px(11))
+
+fits_by_stream$praise
+
+map(fits_by_stream$fit, ~ summary(.x)) |> set_names(fits_by_stream$cmplx_strm)
+```
+
+second plot of the gradient-sphigh combined effect in Abernathy could be really nice if it holds?
+```{r pred_plots}
+#| label: pred_plots
+
+summary(fits_by_stream$fit[[2]])
+
+plot_predictions(
+  fits_by_stream$fit[[2]],
+  #  condition = "prim_channel_gradient",
+  #  condition = "hect_vb_per_km",
+  condition = "sphigh",
+  type = "response",
+  points = 0.6,
+  rug = TRUE
 )
 
-mods <- tibble(
-  form = unlist(
-    map(1:length(rhs), \(i) combn(rhs, i, simplify = F)),
-    recursive = FALSE
-  ) |>
-    map(~ paste(lhs, "~ s(", paste(.x, collapse = ") + s("), ")"))
+plot_predictions(
+  fits_by_stream$fit[[2]],
+  #  condition = c("prim_channel_gradient", "sphigh"),
+  condition = c("sphigh", "prim_channel_gradient"),
+  type = "response",
+  points = 0.6,
+  rug = TRUE
 )
 ```
+
+
+
+# fit by complex
+
+https://ecogambler.netlify.app/blog/interpreting-gams/#difference-smooths-how-does-a-smooth-effect-vary-among-groups
 
