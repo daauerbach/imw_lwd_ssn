@@ -17,14 +17,18 @@ encoding: UTF-8
 ---
 
 next:
- - re-do fits by stream, stop doing all combos, do all covars (with select=T) and examine (then refit with retained?)
+ - add drainage area and/or (relative distance from outlet?)
+ - fit width models as a null comparison
+ - other responses than pool_cv --> back to wood, thinking about site residuals and stream trt-ref differences in terms and coefs
  - fit by complex with stream as fixed or random effect? then compare to single stream fits
- - add 'local' covars (e.g., vlwd_cv, pct_pools_mean, etc.) to see if they improve model fit
- - test interactions?
+ - test interactions? more/fewer terms?
 
 maybe:
  - rebuild hab measures from emap pull transects?
  - redo SSNblr from RC dgo objects?
+ - spatial gams? https://noamross.github.io/gams-in-r-course/chapter3 
+
+"integrating gradient and lateral constraint into basin-scale planning is no guarantee of success but it can help to reduce failure"
 
 ```{r setup, include=FALSE, warning=FALSE, message=FALSE}
 #| label: setup
@@ -396,7 +400,7 @@ and sets up better shift to fitting by complex with 'stream' as fixed or random 
 ```{r}
 lhs <- "pct_pools_cv"
 rhs <- c(
-  "vlwd_cv",
+  #"vlwd_cv",
   "prim_channel_gradient",
   "hect_vb_per_km",
   "low_lying_ratio",
@@ -456,6 +460,8 @@ Could perhaps increase k for:
  - q2 in Mill
 ?
 
+### diagnostics/effects
+
 ```{r kcheck_praise}
 #| label: kcheck_praise
 
@@ -503,8 +509,6 @@ second plot of the gradient-sphigh combined effect in Abernathy could be really 
 ```{r pred_plots}
 #| label: pred_plots
 
-summary(fits_by_stream$fit[[2]])
-
 plot_predictions(
   fits_by_stream$fit[[2]],
   #  condition = "prim_channel_gradient",
@@ -523,8 +527,375 @@ plot_predictions(
   points = 0.6,
   rug = TRUE
 )
+
+# partial plots for all signif smooths in each stream
+fits_by_stream |>
+  mutate(
+    sigsmth = map(fit, ~ as_tibble(summary(.x)$s.table, rownames = "term"))
+  ) |>
+  select(cmplx_strm, fit, sigsmth) |>
+  unnest(sigsmth) |>
+  filter(`p-value` < 0.1) |>
+  mutate(
+    term = str_remove_all(term, "s\\(|\\)"),
+    pp = pmap(
+      list(fit, term, cmplx_strm, `p-value`),
+      \(x, y, z, pv) {
+        plot_predictions(
+          x,
+          condition = y,
+          type = "response",
+          points = 0.6,
+          rug = TRUE
+        ) +
+          labs(subtitle = paste0(z, ", pval: ", round(pv, 4)))
+      }
+    )
+  ) |>
+  arrange(term) |>
+  pull(pp) |>
+  wrap_plots()
 ```
 
+declare combo object 
+```{r sf_dgopred}
+#| label: sf_dgopred
+sf_dgopred <- bind_rows(sf_rc_rme_lc, sf_rc_rme_st) |>
+  left_join(
+    select(as_tibble(sf_wa_huc12_imw), cmplx, huc12, huc12_nm) |>
+      filter(cmplx != "HC") |>
+      mutate(
+        cmplx_strm = paste(cmplx, huc12_nm, sep = "_"),
+        cmplx_strm = if_else(
+          str_detect(cmplx_strm, "Mill|West"),
+          paste0(cmplx_strm, "*"),
+          cmplx_strm
+        ) |>
+          factor(
+            levels = c(
+              'HC_Stavis Creek*',
+              'HC_Seabeck Creek',
+              'HC_Big Beef Creek',
+              'HC_Little Anderson Creek',
+              'LC_Mill Creek*',
+              'LC_Abernathy Creek',
+              'LC_Germany Creek',
+              'ST_Deep Creek',
+              'ST_West Twin River*',
+              'ST_East Twin River'
+            )
+          )
+      ),
+    by = "huc12"
+  ) |>
+  select(cmplx, huc12, cmplx_strm, all_of(rhs)) |> # summary()
+  split(~cmplx_strm, drop = T) |>
+  map(
+    ~ .x |>
+      mutate(
+        est = predict(
+          pull(filter(fits_by_stream, cmplx_strm == .x$cmplx_strm[1]), "fit")[[
+            1
+          ]],
+          newdata = as_tibble(.x),
+          type = "response"
+        )
+      ) |>
+      drop_na(est)
+  )
+```
+
+### support for prediction
+
+site rme vals within stream distributions
+reasonably nice, paneled by stream (better with log10 axes), and arguably better on bin2d
+would be important to note that counts of dgo feature units are highest for smallest headwater/trib (low order) reaches
+that were not the focus of sampling oriented to fish habitat
+```{r}
+# log10 axes are okay, only a single dgo in Deep Creek has gradient == 0
+sf_dgopred |>
+  # bind_rows() |>
+  # as_tibble() |>
+  # # mutate(across(c(prim_channel_gradient, hect_vb_per_km), log10)) |>
+  # # summarise(sum(is.infinite(prim_channel_gradient)), sum(is.infinite(hect_vb_per_km)))
+  # filter(prim_channel_gradient == 0)
+  map(
+    ~ .x |>
+      ggplot(aes(prim_channel_gradient, hect_vb_per_km)) +
+      #geom_point(size = 0.5, alpha = 0.2) +
+      geom_bin2d(alpha = 0.6) +
+      scale_fill_gradient(low = "grey90", high = "grey20") +
+      geom_point(
+        data = fits_by_stream |>
+          filter(cmplx_strm == .x$cmplx_strm[1]) |>
+          select(cmplx_strm, data) |>
+          unnest(data),
+        color = "blue",
+        fill = "blue",
+        shape = 17
+      ) +
+      scale_x_log10() +
+      scale_y_log10() +
+      labs(subtitle = .x$cmplx_strm[1])
+  ) |>
+  wrap_plots(nrow = 2)
+```
+
+scatter overlaid to see among stream overall overlap/diffs but also hard to see much?
+```{r}
+ggplot(
+  mapping = aes(prim_channel_gradient, hect_vb_per_km, color = cmplx_strm)
+) +
+  geom_point(
+    data = bind_rows(sf_dgopred) |>
+      filter(prim_channel_gradient > 0, str_detect(cmplx_strm, "ST")),
+    size = 0.5,
+    alpha = 0.4
+  ) +
+  geom_point(
+    data = fits_by_stream |>
+      select(cmplx_strm, data) |>
+      unnest(data) |>
+      bind_rows() |>
+      filter(str_detect(cmplx_strm, "ST")),
+    shape = 17
+  ) +
+  scale_x_log10() +
+  scale_y_log10() +
+  scale_color_manual(values = pal_cmplx_strm, aesthetics = c("color", "fill"))
+```
+
+better as univariate densities with rug of site-reach
+```{r}
+# bind_rows(sf_dgopred) |>
+#   filter(prim_channel_gradient > 0, str_detect(cmplx_strm, "ST")) |>
+#   ggplot(aes(prim_channel_gradient, color = cmplx_strm, fill = cmplx_strm)) +
+#   geom_density(alpha = 0.4, show.legend = F) +
+#   geom_rug(
+#     data = fits_by_stream |>
+#       select(cmplx_strm, data) |>
+#       unnest(data) |>
+#       bind_rows() |>
+#       filter(str_detect(cmplx_strm, "ST")),
+#     sides = "b",
+#     show.legend = F
+#   ) +
+#   scale_color_manual(values = pal_cmplx_strm, aesthetics = c("color", "fill")) +
+#   facet_wrap(~cmplx_strm, ncol = 1)
+
+sf_dgopred |>
+  map(
+    ~ .x |>
+      ggplot(aes(
+        prim_channel_gradient,
+        color = cmplx_strm,
+        fill = cmplx_strm
+      )) +
+      geom_density(alpha = 0.4, show.legend = F) +
+      geom_rug(
+        data = fits_by_stream |>
+          filter(cmplx_strm == .x$cmplx_strm[1]) |>
+          select(cmplx_strm, data) |>
+          unnest(data),
+        sides = "b",
+        show.legend = F
+      ) +
+      scale_color_manual(
+        values = pal_cmplx_strm,
+        aesthetics = c("color", "fill")
+      ) +
+      labs(subtitle = .x$cmplx_strm[1])
+  ) |>
+  wrap_plots(nrow = 3, byrow = F)
+```
+
+### spatial/network prediction
+
+need complex sf_dgo objects distinguished by stream/basin to apply per-stream fits to make prediction surfaces
+could/should rebuild sf_rc_rme objects 
+also cannot predict from models that include local/site covars
+```{r}
+map(sf_dgopred, summary)
+
+sf_dgopred[1:3] |>
+  map(
+    ~ .x |>
+      ggplot() +
+      geom_sf(aes(fill = est, color = est)) +
+      scale_color_viridis_b(
+        option = "plasma",
+        aesthetics = c("color", "fill"),
+        breaks = quantile(.x$est, seq(0, 1, by = 0.25)),
+        labels = round(quantile(.x$est, seq(0, 1, by = 0.25)), 3)
+      ) +
+      theme_void() +
+      labs(
+        title = "Predicted CV %pools",
+        subtitle = paste(
+          str_squish(paste0(
+            format(
+              pull(
+                filter(fits_by_stream, cmplx_strm == .x$cmplx_strm[1]),
+                "fit"
+              )[[1]]$formula
+            ),
+            collapse = ""
+          )),
+          paste0(
+            "Dev. expl.: ",
+            scales::percent(
+              pull(
+                filter(fits_by_stream, cmplx_strm == .x$cmplx_strm[1]),
+                "devexpl"
+              ),
+              2
+            )
+          ),
+          sep = "\n"
+        )
+      )
+  ) |>
+  wrap_plots(nrow = 1)
+```
+
+
+## re-examine covar set
+
+declare nonspatial combo metric object for all dgos
+```{r}
+rc <- bind_rows(sf_rc_rme_lc, sf_rc_rme_st) |>
+  as_tibble() |>
+  left_join(
+    select(as_tibble(sf_wa_huc12_imw), cmplx, huc12, huc12_nm) |>
+      filter(cmplx != "HC") |>
+      mutate(
+        cmplx_strm = paste(cmplx, huc12_nm, sep = "_"),
+        cmplx_strm = if_else(
+          str_detect(cmplx_strm, "Mill|West"),
+          paste0(cmplx_strm, "*"),
+          cmplx_strm
+        ) |>
+          factor(
+            levels = c(
+              # 'HC_Stavis Creek*',
+              # 'HC_Seabeck Creek',
+              # 'HC_Big Beef Creek',
+              # 'HC_Little Anderson Creek',
+              'LC_Mill Creek*',
+              'LC_Abernathy Creek',
+              'LC_Germany Creek',
+              'ST_Deep Creek',
+              'ST_West Twin River*',
+              'ST_East Twin River'
+            )
+          )
+      ),
+    by = "huc12"
+  ) |>
+  drop_na(drainage_area)
+```
+
+RC RME values of drainage area some fairly strong but not >0.75 correlation with gradient and valley width (log10 transformed), but nearly perfectly with channel width (possible/likely that in fact channel width is calc'd/derived from drainage area via regional hydraulic geometry scaling?)
+this does also informs the lognormal-ish distributions (at least of DA)
+```{r}
+rc |>
+  select(
+    cmplx_strm,
+    drainage_area,
+    prim_channel_gradient,
+    hect_vb_per_km,
+    channel_width
+  ) |>
+  #count(cmplx_strm) |> left_join(tibble(cmplx_strm = names(pal_cmplx_strm), val = pal_cmplx_strm))
+  mutate(across(
+    c(drainage_area, prim_channel_gradient, hect_vb_per_km, channel_width),
+    log10
+  )) |>
+  filter(
+    is.finite(drainage_area),
+    is.finite(prim_channel_gradient),
+    is.finite(hect_vb_per_km)
+  ) |>
+  GGally::ggpairs(mapping = aes(color = cmplx_strm, alpha = 0.15))
+# scale_color_manual(
+#   values = pal_cmplx_strm[5:10],
+#   aesthetics = c("color", "fill")
+# )
+```
+
+so still question of what including DA will do to other covars
+
+# fit width_cv vs da + ...?
+
+confirmatory null: quick first look says DA does most of the explaining for bankfull_width_mean as expected
+though performance is somewhat uneven across streams
+from very good in E Twin, Deep, Mill, to less amazing in W Twin, Abernathy
+worth looking at residuals?
+not (yet) pre-log10!
+
+bankfull_cv also varied among streams and/but also consistently worse
+
+vlwd_m2_cv devexpl and obs-vs-fit quick look sort of in between - maybe better across the board than bankfull_cv but worse than bankfull_mean
+
+```{r}
+#lhs <- "bankfull_width_mean"
+#lhs <- "bankfull_cv"
+lhs <- "vlwd_m2_cv"
+rhs <- c(
+  "drainage_area",
+  "prim_channel_gradient",
+  "hect_vb_per_km"
+)
+
+form <- paste(lhs, "~", paste0("s(", rhs, ")", collapse = " + "))
+
+fits_by_stream_bankfull <- bind_rows(
+  as_tibble(sf_site_rme_lc),
+  as_tibble(sf_site_rme_st)
+) |>
+  mutate(
+    bankfull_cv = bankfull_width_sd / bankfull_width_mean,
+    vlwd_m2_cv = vlwd_per_m2_sd / vlwd_per_m2_mean
+  ) |>
+  select(cmplx_strm, site, all_of(lhs), all_of(rhs)) |> # summary()
+  nest(.by = c(cmplx_strm)) |>
+  mutate(
+    fit = map(
+      data,
+      ~ gam(
+        as.formula(form),
+        data = .x,
+        family = Gamma(link = "log"),
+        method = "REML",
+        select = TRUE
+      )
+    ),
+    devexpl = map_dbl(fit, ~ summary(.x)[["dev.expl"]]),
+    glance = map(fit, ~ broom::glance(.x)),
+    check = map(fit, ~ as_tibble(k.check(.x), rownames = "term"))
+  ) |>
+  unnest(glance) |>
+  mutate(
+    praise = pmap(
+      list(fit, cmplx_strm, devexpl),
+      \(mod, strm, dev) {
+        gratia::appraise(mod, method = "simulate") +
+          plot_annotation(
+            title = strm,
+            subtitle = paste(form, "\ndevexpl =", round(dev, 2))
+          )
+      }
+    )
+  )
+
+fits_by_stream_bankfull
+
+fits_by_stream_bankfull$fit |>
+  map(~ summary(.x)) |>
+  set_names(fits_by_stream_bankfull$cmplx_strm)
+
+fits_by_stream_bankfull$praise
+```
 
 
 # fit by complex
